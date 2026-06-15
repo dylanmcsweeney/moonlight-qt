@@ -1,0 +1,7 @@
+<RCC>
+    <qresource prefix="/">
+        <file>main.qml</file>
+        <file alias="res/desktop_windows-48px.svg">../../app/res/desktop_windows-48px.svg</file>
+        <file alias="res/settings.svg">../../app/res/settings.svg</file>
+    </qresource>
+</RCC>

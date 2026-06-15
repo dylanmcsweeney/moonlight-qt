@@ -5,6 +5,8 @@
 #include <QQmlEngine>
 #include <QVariantList>
 
+class QSettings;
+
 class StreamingPreferences : public QObject
 {
     Q_OBJECT
@@ -12,12 +14,21 @@ class StreamingPreferences : public QObject
 public:
     static StreamingPreferences* get(QQmlEngine *qmlEngine = nullptr);
 
+    explicit StreamingPreferences(QObject* parent = nullptr);
+
     Q_INVOKABLE static int
     getDefaultBitrate(int width, int height, int fps, bool yuv444);
 
     Q_INVOKABLE void save();
+    Q_INVOKABLE void resetToStock();
 
     void reload();
+    void copyStreamSettingsFrom(const StreamingPreferences& other);
+    bool streamSettingsEqual(const StreamingPreferences& other) const;
+    bool streamSettingsValid() const;
+    void loadStreamSettings(QSettings& settings);
+    void saveStreamSettings(QSettings& settings) const;
+    void notifyAllChanged();
 
     enum AudioConfig
     {
@@ -71,6 +82,34 @@ public:
         UI_FULLSCREEN
     };
     Q_ENUM(UIDisplayMode)
+
+    enum UIFramePacingMode
+    {
+        UI_FRAME_PACING_DISABLED,
+        UI_FRAME_PACING_MATCH_DISPLAY,
+        UI_FRAME_PACING_60,
+        UI_FRAME_PACING_90,
+        UI_FRAME_PACING_120,
+        UI_FRAME_PACING_144,
+        UI_FRAME_PACING_UNBOUNDED
+    };
+    Q_ENUM(UIFramePacingMode)
+
+    enum UIGraphicsBackend
+    {
+        UI_GRAPHICS_AUTOMATIC,
+        UI_GRAPHICS_D3D12,
+        UI_GRAPHICS_D3D11,
+        UI_GRAPHICS_OPENGL
+    };
+    Q_ENUM(UIGraphicsBackend)
+
+    enum UID3D11SwapchainMode
+    {
+        UI_D3D11_FLIP,
+        UI_D3D11_LEGACY
+    };
+    Q_ENUM(UID3D11SwapchainMode)
 
     // New entries must go at the end of the enum
     // to avoid renumbering existing entries (which
@@ -151,11 +190,16 @@ public:
     Q_PROPERTY(WindowMode windowMode MEMBER windowMode NOTIFY windowModeChanged)
     Q_PROPERTY(WindowMode recommendedFullScreenMode MEMBER recommendedFullScreenMode CONSTANT)
     Q_PROPERTY(UIDisplayMode uiDisplayMode MEMBER uiDisplayMode NOTIFY uiDisplayModeChanged)
+    Q_PROPERTY(UIFramePacingMode uiFramePacingMode MEMBER uiFramePacingMode NOTIFY uiFramePacingModeChanged)
+    Q_PROPERTY(UIGraphicsBackend uiGraphicsBackend MEMBER uiGraphicsBackend NOTIFY uiGraphicsBackendChanged)
+    Q_PROPERTY(UID3D11SwapchainMode uiD3D11SwapchainMode MEMBER uiD3D11SwapchainMode NOTIFY uiD3D11SwapchainModeChanged)
     Q_PROPERTY(bool swapMouseButtons MEMBER swapMouseButtons NOTIFY mouseButtonsChanged)
     Q_PROPERTY(bool muteOnFocusLoss MEMBER muteOnFocusLoss NOTIFY muteOnFocusLossChanged)
     Q_PROPERTY(bool backgroundGamepad MEMBER backgroundGamepad NOTIFY backgroundGamepadChanged)
     Q_PROPERTY(bool reverseScrollDirection MEMBER reverseScrollDirection NOTIFY reverseScrollDirectionChanged)
     Q_PROPERTY(bool swapFaceButtons MEMBER swapFaceButtons NOTIFY swapFaceButtonsChanged)
+    Q_PROPERTY(bool uiSwapFaceButtons MEMBER uiSwapFaceButtons NOTIFY uiSwapFaceButtonsChanged)
+    Q_PROPERTY(bool showPcProfileControls MEMBER showPcProfileControls NOTIFY showPcProfileControlsChanged)
     Q_PROPERTY(bool keepAwake MEMBER keepAwake NOTIFY keepAwakeChanged)
     Q_PROPERTY(CaptureSysKeysMode captureSysKeysMode MEMBER captureSysKeysMode NOTIFY captureSysKeysModeChanged)
     Q_PROPERTY(Language language MEMBER language NOTIFY languageChanged);
@@ -194,6 +238,8 @@ public:
     bool backgroundGamepad;
     bool reverseScrollDirection;
     bool swapFaceButtons;
+    bool uiSwapFaceButtons;
+    bool showPcProfileControls;
     bool keepAwake;
     int packetSize;
     AudioConfig audioConfig;
@@ -204,6 +250,9 @@ public:
     WindowMode windowMode;
     WindowMode recommendedFullScreenMode;
     UIDisplayMode uiDisplayMode;
+    UIFramePacingMode uiFramePacingMode;
+    UIGraphicsBackend uiGraphicsBackend;
+    UID3D11SwapchainMode uiD3D11SwapchainMode;
     Language language;
     CaptureSysKeysMode captureSysKeysMode;
     RendererSelection rendererSelection;
@@ -229,6 +278,9 @@ signals:
     void enableYUV444Changed();
     void videoDecoderSelectionChanged();
     void uiDisplayModeChanged();
+    void uiFramePacingModeChanged();
+    void uiGraphicsBackendChanged();
+    void uiD3D11SwapchainModeChanged();
     void windowModeChanged();
     void framePacingChanged();
     void connectionWarningsChanged();
@@ -242,6 +294,8 @@ signals:
     void backgroundGamepadChanged();
     void reverseScrollDirectionChanged();
     void swapFaceButtonsChanged();
+    void uiSwapFaceButtonsChanged();
+    void showPcProfileControlsChanged();
     void captureSysKeysModeChanged();
     void keepAwakeChanged();
     void languageChanged();
@@ -250,6 +304,7 @@ signals:
 private:
     explicit StreamingPreferences(QQmlEngine *qmlEngine);
 
+    void loadLegacySettings(QSettings& settings);
     QString getSuffixFromLanguage(Language lang);
 
     QQmlEngine* m_QmlEngine;

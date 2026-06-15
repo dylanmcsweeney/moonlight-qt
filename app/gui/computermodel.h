@@ -16,7 +16,10 @@ class ComputerModel : public QAbstractListModel
         WakeableRole,
         StatusUnknownRole,
         ServerSupportedRole,
-        DetailsRole
+        DetailsRole,
+        UuidRole,
+        ActiveProfileIdRole,
+        ActiveProfileNameRole
     };
 
 public:
@@ -53,6 +56,7 @@ private slots:
     void handleComputerStateChanged(NvComputer* computer);
 
     void handlePairingCompleted(NvComputer* computer, QString error);
+    void handleProfilesChanged(QString hostUuid);
 
 private:
     QVector<NvComputer*> m_Computers;

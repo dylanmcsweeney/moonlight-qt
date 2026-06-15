@@ -98,7 +98,9 @@ class Session : public QObject
     friend class AsyncConnectionStartThread;
 
 public:
-    explicit Session(NvComputer* computer, NvApp& app, StreamingPreferences *preferences = nullptr);
+    explicit Session(NvComputer* computer, NvApp& app,
+                     StreamingPreferences *preferences = nullptr,
+                     bool takePreferencesOwnership = false);
     virtual ~Session();
 
     Q_INVOKABLE bool initialize(QQuickWindow* qtWindow);

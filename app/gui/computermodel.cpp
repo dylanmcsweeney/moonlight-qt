@@ -1,4 +1,5 @@
 #include "computermodel.h"
+#include "settings/streamprofilemanager.h"
 
 #include <QThreadPool>
 
@@ -12,6 +13,8 @@ void ComputerModel::initialize(ComputerManager* computerManager)
             this, &ComputerModel::handleComputerStateChanged);
     connect(m_ComputerManager, &ComputerManager::pairingCompleted,
             this, &ComputerModel::handlePairingCompleted);
+    connect(StreamProfileManager::get(), &StreamProfileManager::profilesChanged,
+            this, &ComputerModel::handleProfilesChanged);
 
     m_Computers = m_ComputerManager->getComputers();
 }
@@ -42,6 +45,12 @@ QVariant ComputerModel::data(const QModelIndex& index, int role) const
         return computer->state == NvComputer::CS_UNKNOWN;
     case ServerSupportedRole:
         return computer->isSupportedServerVersion;
+    case UuidRole:
+        return computer->uuid;
+    case ActiveProfileIdRole:
+        return StreamProfileManager::get()->activeProfileId(computer->uuid);
+    case ActiveProfileNameRole:
+        return StreamProfileManager::get()->activeProfileName(computer->uuid);
     case DetailsRole: {
         QString state, pairState;
 
@@ -110,6 +119,9 @@ QHash<int, QByteArray> ComputerModel::roleNames() const
     names[StatusUnknownRole] = "statusUnknown";
     names[ServerSupportedRole] = "serverSupported";
     names[DetailsRole] = "details";
+    names[UuidRole] = "uuid";
+    names[ActiveProfileIdRole] = "activeProfileId";
+    names[ActiveProfileNameRole] = "activeProfileName";
 
     return names;
 }
@@ -125,7 +137,9 @@ Session* ComputerModel::createSessionForCurrentGame(int computerIndex)
 
     for (NvApp& app : computer->appList) {
         if (app.id == computer->currentGameId) {
-            return new Session(computer, app);
+            return new Session(computer, app,
+                               StreamProfileManager::get()->createActiveSettings(computer->uuid),
+                               true);
         }
     }
 
@@ -239,6 +253,17 @@ void ComputerModel::handleComputerStateChanged(NvComputer* computer)
         // Let the view know that this specific computer changed
         int index = m_Computers.indexOf(computer);
         emit dataChanged(createIndex(index, 0), createIndex(index, 0));
+    }
+}
+
+void ComputerModel::handleProfilesChanged(QString hostUuid)
+{
+    for (int i = 0; i < m_Computers.count(); i++) {
+        if (m_Computers[i]->uuid == hostUuid) {
+            emit dataChanged(createIndex(i, 0), createIndex(i, 0),
+                             QVector<int>() << ActiveProfileIdRole << ActiveProfileNameRole);
+            return;
+        }
     }
 }
 

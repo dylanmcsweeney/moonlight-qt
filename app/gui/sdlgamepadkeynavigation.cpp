@@ -131,7 +131,7 @@ void SdlGamepadKeyNavigation::onPollingTimerFired()
                         QEvent::Type::KeyPress : QEvent::Type::KeyRelease;
 
             // Swap face buttons if needed
-            if (m_Prefs->swapFaceButtons) {
+            if (m_Prefs->uiSwapFaceButtons) {
                 switch (event.cbutton.button) {
                 case SDL_CONTROLLER_BUTTON_A:
                     event.cbutton.button = SDL_CONTROLLER_BUTTON_B;
@@ -184,13 +184,14 @@ void SdlGamepadKeyNavigation::onPollingTimerFired()
                 sendKey(type, Qt::Key_Escape);
                 break;
             case SDL_CONTROLLER_BUTTON_X:
-                sendKey(type, Qt::Key_Menu);
+                // Edit the active streaming profile for the selected PC.
+                sendKey(type, Qt::Key_F2);
                 break;
             case SDL_CONTROLLER_BUTTON_Y:
+                sendKey(type, Qt::Key_Menu);
+                break;
             case SDL_CONTROLLER_BUTTON_START:
-                // HACK: We use this keycode to inform main.qml
-                // to show the settings when Key_Menu is handled
-                // by the control in focus.
+                // Inform main.qml to show global application settings.
                 sendKey(type, Qt::Key_Hangup);
                 break;
             default:

@@ -7,10 +7,12 @@ import SystemProperties 1.0
 // https://stackoverflow.com/questions/45029968/how-do-i-set-the-combobox-width-to-fit-the-largest-item
 ComboBox {
     property int textWidth
-    property int desiredWidth : leftPadding + textWidth + indicator.width + rightPadding
-    property int maximumWidth : parent.width
+    property int desiredWidth: leftPadding + textWidth +
+                               (indicator ? indicator.width : 0) + rightPadding
+    property int maximumWidth: parent ? parent.width : desiredWidth
 
-    implicitWidth: desiredWidth < maximumWidth ? desiredWidth : maximumWidth
+    implicitWidth: Math.min(desiredWidth, maximumWidth)
+    popup.width: width
 
     TextMetrics {
         id: popupMetrics
@@ -32,11 +34,46 @@ ComboBox {
         }
     }
 
-    // We call this every time the options change (and init)
-    // so we can adjust the combo box width here too
-    onActivated: recalculateWidth()
+    function scheduleWidthRecalculation() {
+        widthRecalculationTimer.restart()
+    }
+
+    Timer {
+        id: widthRecalculationTimer
+        interval: 0
+        repeat: false
+        onTriggered: recalculateWidth()
+    }
+
+    Component.onCompleted: scheduleWidthRecalculation()
+    onCountChanged: scheduleWidthRecalculation()
+    onModelChanged: scheduleWidthRecalculation()
+    onFontChanged: scheduleWidthRecalculation()
+
+    Connections {
+        target: model
+        ignoreUnknownSignals: true
+
+        function onDataChanged() {
+            scheduleWidthRecalculation()
+        }
+
+        function onModelReset() {
+            scheduleWidthRecalculation()
+        }
+
+        function onRowsInserted() {
+            scheduleWidthRecalculation()
+        }
+
+        function onRowsRemoved() {
+            scheduleWidthRecalculation()
+        }
+    }
 
     popup.onAboutToShow: {
+        recalculateWidth()
+
         // Switch to normal navigation for combo boxes
         SdlGamepadKeyNavigation.setUiNavMode(false)
 

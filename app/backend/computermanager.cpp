@@ -1,4 +1,5 @@
 #include "computermanager.h"
+#include "settings/streamprofilemanager.h"
 #include "boxartmanager.h"
 #include "nvhttp.h"
 #include "nvpairingmanager.h"
@@ -182,6 +183,7 @@ ComputerManager::ComputerManager(StreamingPreferences* prefs)
         NvComputer* computer = new NvComputer(settings);
         m_KnownHosts[computer->uuid] = computer;
         m_LastSerializedHosts[computer->uuid] = *computer;
+        StreamProfileManager::get()->ensureExistingHost(computer->uuid);
     }
     settings.endArray();
 
@@ -526,6 +528,9 @@ public:
 
         // Delete cached box art
         BoxArtManager::deleteBoxArt(m_Computer);
+
+        // Delete per-host streaming profiles
+        StreamProfileManager::get()->removeHost(m_Computer->uuid);
 
         // Finally, delete the computer itself. This must be done
         // last because the polling thread might be using it.
@@ -956,6 +961,7 @@ private:
             else {
                 // Store this in our active sets
                 m_ComputerManager->m_KnownHosts[newComputer->uuid] = newComputer;
+                StreamProfileManager::get()->ensureHost(newComputer->uuid);
 
                 // Start polling if enabled (write lock required)
                 m_ComputerManager->startPollingComputer(newComputer);

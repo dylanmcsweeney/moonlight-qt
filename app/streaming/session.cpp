@@ -590,7 +590,9 @@ bool Session::populateDecoderProperties(SDL_Window* window)
     return true;
 }
 
-Session::Session(NvComputer* computer, NvApp& app, StreamingPreferences *preferences)
+Session::Session(NvComputer* computer, NvApp& app,
+                 StreamingPreferences *preferences,
+                 bool takePreferencesOwnership)
     : m_Preferences(preferences ? preferences : StreamingPreferences::get()),
       m_IsFullScreen(m_Preferences->windowMode != StreamingPreferences::WM_WINDOWED || !WMUtils::isRunningDesktopEnvironment()),
       m_Computer(computer),
@@ -612,6 +614,9 @@ Session::Session(NvComputer* computer, NvApp& app, StreamingPreferences *prefere
       m_AudioSampleCount(0),
       m_DropAudioEndTime(0)
 {
+    if (takePreferencesOwnership && preferences != nullptr) {
+        preferences->setParent(this);
+    }
 }
 
 Session::~Session()

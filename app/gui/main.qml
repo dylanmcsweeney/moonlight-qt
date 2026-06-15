@@ -11,7 +11,14 @@ import SystemProperties 1.0
 import SdlGamepadKeyNavigation 1.0
 
 ApplicationWindow {
+    // This is the Qt Quick render-pass clear color. Windows resize gaps are
+    // handled separately by the DirectComposition setup in UiRendererManager.
+    color: "#303030"
+
     property bool pollingActive: false
+    property bool initialPcWindowSizeApplied: false
+    property real initialPcWindowWidth: 0
+    property real initialPcWindowHeight: 0
 
     // Set by SettingsView to force the back operation to pop all
     // pages except the initial view. This is required when doing
@@ -21,6 +28,65 @@ ApplicationWindow {
     id: window
     width: 1280
     height: 600
+
+    function fitInitialPcWindow(itemCount, cellWidth, cellHeight,
+                                itemWidth, itemHeight) {
+        if (initialPcWindowSizeApplied ||
+                !SystemProperties.hasDesktopEnvironment ||
+                StreamingPreferences.uiDisplayMode !=
+                    StreamingPreferences.UI_WINDOWED) {
+            return
+        }
+
+        initialPcWindowSizeApplied = true
+
+        var availableWidth = Screen.desktopAvailableWidth
+        var availableHeight = Screen.desktopAvailableHeight
+        var margin = 20
+        var maximumColumns = Math.max(
+            1, Math.floor((availableWidth - 2 * margin) / cellWidth))
+        var columns = Math.max(
+            1, Math.min(Math.max(itemCount, 1), maximumColumns, 4))
+        var rows = Math.max(
+            1, Math.ceil(Math.max(itemCount, 1) / columns))
+        var visibleWidth = (columns - 1) * cellWidth + itemWidth
+        var visibleHeight = (rows - 1) * cellHeight + itemHeight
+
+        initialPcWindowWidth = Math.min(
+            availableWidth,
+            Math.max(700, visibleWidth + 2 * margin))
+        initialPcWindowHeight = Math.min(
+            availableHeight,
+            toolBar.height + visibleHeight + 2 * margin)
+        initialPcWindowFitTimer.restart()
+    }
+
+    Timer {
+        id: initialPcWindowFitTimer
+        interval: 50
+        repeat: false
+
+        onTriggered: {
+            // Apply this after show() and the first StackView layout pass.
+            // Otherwise the platform window can retain main.qml's initial
+            // 1280x600 geometry even though the PC grid has already loaded.
+            window.width = window.initialPcWindowWidth
+            window.height = window.initialPcWindowHeight
+
+            if (stackView.currentItem &&
+                    stackView.currentItem.updateMargins) {
+                stackView.currentItem.updateMargins()
+            }
+        }
+    }
+
+    onClosing: function(close) {
+        if (stackView.currentItem &&
+                stackView.currentItem.requestApplicationClose &&
+                stackView.currentItem.requestApplicationClose()) {
+            close.accepted = false
+        }
+    }
 
     // This function runs prior to creation of the initial StackView item
     function doEarlyInit() {
@@ -63,8 +129,19 @@ ApplicationWindow {
         }
     }
 
+    Connections {
+        target: UiRendererManager
+
+        function onSoftwareD3D12Detected(adapterName) {
+            if (runConfigChecks) {
+                softwareD3D12Dialog.adapterName = adapterName
+                softwareD3D12Dialog.open()
+            }
+        }
+    }
+
     function hasHardwareAccelerationChanged() {
-        if (!SystemProperties.hasHardwareAcceleration && StreamingPreferences.videoDecoderSelection !== StreamingPreferences.VDS_FORCE_SOFTWARE) {
+        if (!SystemProperties.hasHardwareAcceleration) {
             if (SystemProperties.isRunningXWayland) {
                 xWaylandDialog.open()
             }
@@ -96,6 +173,11 @@ ApplicationWindow {
     ToolTip.toolTip.contentWidth: Math.min(tooltipTextLayoutHelper.width, 400)
 
     function goBack() {
+        if (stackView.currentItem && stackView.currentItem.requestClose &&
+                stackView.currentItem.requestClose()) {
+            return
+        }
+
         if (clearOnBack) {
             // Pop all items except the first one
             stackView.pop(null)
@@ -141,10 +223,6 @@ ApplicationWindow {
             else {
                 quitConfirmationDialog.open()
             }
-        }
-
-        Keys.onMenuPressed: {
-            settingsButton.clicked()
         }
 
         // This is a keypress we've reserved for letting the
@@ -233,6 +311,13 @@ ApplicationWindow {
         }
     }
 
+    function openProfileEditor(editor)
+    {
+        var component = Qt.createComponent("SettingsView.qml")
+        var view = component.createObject(stackView, {"profileEditor": editor})
+        stackView.push(view)
+    }
+
     header: ToolBar {
         id: toolBar
         height: 60
@@ -287,7 +372,8 @@ ApplicationWindow {
 
             Label {
                 id: versionLabel
-                visible: stackView.currentItem instanceof SettingsView
+                visible: stackView.currentItem instanceof SettingsView ||
+                         stackView.currentItem instanceof AppSettingsView
                 text: qsTr("Version %1").arg(SystemProperties.versionString)
                 font.pointSize: 12
                 horizontalAlignment: Qt.AlignRight
@@ -297,7 +383,8 @@ ApplicationWindow {
             NavigableToolButton {
                 id: discordButton
                 visible: SystemProperties.hasBrowser &&
-                         stackView.currentItem instanceof SettingsView
+                         (stackView.currentItem instanceof SettingsView ||
+                          stackView.currentItem instanceof AppSettingsView)
 
                 iconSource: "qrc:/res/discord.svg"
 
@@ -426,7 +513,14 @@ ApplicationWindow {
 
                 iconSource:  "qrc:/res/settings.svg"
 
-                onClicked: navigateTo("qrc:/gui/SettingsView.qml", SettingsView)
+                onClicked: {
+                    if (stackView.currentItem &&
+                            stackView.currentItem.requestGlobalSettings &&
+                            stackView.currentItem.requestGlobalSettings()) {
+                        return
+                    }
+                    navigateTo("qrc:/gui/AppSettingsView.qml", AppSettingsView)
+                }
 
                 Keys.onDownPressed: {
                     stackView.currentItem.forceActiveFocus(Qt.TabFocus)
@@ -478,6 +572,96 @@ ApplicationWindow {
         helpTextSeparator: "\n\n"
         helpText: qsTr("Click the Help button for information on how to map your gamepads.")
         helpUrl: "https://github.com/moonlight-stream/moonlight-docs/wiki/Gamepad-Mapping"
+    }
+
+    NavigableDialog {
+        id: softwareD3D12Dialog
+        property string adapterName
+        property bool restartFailed: false
+
+        title: qsTr("Direct3D 12 Hardware Unavailable")
+        modal: true
+
+        onOpened: {
+            restartFailed = false
+            softwareRendererFallbackComboBox.forceActiveFocus(Qt.TabFocus)
+        }
+
+        ColumnLayout {
+            width: 500
+            spacing: 12
+
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                text: qsTr("Moonlight could not create a hardware Direct3D 12 device, so Qt is rendering the GUI with the software WARP adapter%1. This may cause poor performance.")
+                    .arg(softwareD3D12Dialog.adapterName ?
+                             " (" + softwareD3D12Dialog.adapterName + ")" : "")
+            }
+
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                text: qsTr("Select a fallback renderer and restart, or continue with software Direct3D 12 for testing.")
+            }
+
+            AutoResizingComboBox {
+                id: softwareRendererFallbackComboBox
+                textRole: "text"
+                model: ListModel {
+                    ListElement {
+                        text: qsTr("Direct3D 11 (modern flip model)")
+                        backend: StreamingPreferences.UI_GRAPHICS_D3D11
+                        swapchain: StreamingPreferences.UI_D3D11_FLIP
+                    }
+                    ListElement {
+                        text: qsTr("Direct3D 11 (legacy swap chain)")
+                        backend: StreamingPreferences.UI_GRAPHICS_D3D11
+                        swapchain: StreamingPreferences.UI_D3D11_LEGACY
+                    }
+                    ListElement {
+                        text: qsTr("OpenGL")
+                        backend: StreamingPreferences.UI_GRAPHICS_OPENGL
+                        swapchain: StreamingPreferences.UI_D3D11_FLIP
+                    }
+                    ListElement {
+                        text: qsTr("Automatic (Qt default)")
+                        backend: StreamingPreferences.UI_GRAPHICS_AUTOMATIC
+                        swapchain: StreamingPreferences.UI_D3D11_FLIP
+                    }
+                }
+            }
+
+            Label {
+                visible: softwareD3D12Dialog.restartFailed
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                color: "#ff8080"
+                text: qsTr("Moonlight could not restart automatically. Change the renderer in Application Settings and restart manually.")
+            }
+        }
+
+        footer: DialogButtonBox {
+            Button {
+                text: qsTr("Continue with WARP")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+                onClicked: softwareD3D12Dialog.close()
+            }
+
+            Button {
+                text: qsTr("Apply and Restart")
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+                onClicked: {
+                    var selected =
+                        softwareRendererFallbackComboBox.model.get(
+                            softwareRendererFallbackComboBox.currentIndex)
+                    if (!UiRendererManager.restartWithGraphicsConfiguration(
+                            selected.backend, selected.swapchain)) {
+                        softwareD3D12Dialog.restartFailed = true
+                    }
+                }
+            }
+        }
     }
 
     // This dialog appears when quitting via keyboard or gamepad button

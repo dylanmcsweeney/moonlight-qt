@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/">
+        <file alias="buildlabel.txt">../app/buildlabel.txt</file>
+    </qresource>
+</RCC>

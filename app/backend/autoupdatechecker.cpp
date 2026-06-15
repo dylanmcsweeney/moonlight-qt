@@ -1,4 +1,5 @@
 #include "autoupdatechecker.h"
+#include "settings/buildidentity.h"
 
 #include <QNetworkReply>
 #include <QJsonDocument>
@@ -29,6 +30,12 @@ AutoUpdateChecker::AutoUpdateChecker(QObject *parent) :
 
 void AutoUpdateChecker::start()
 {
+    if (BuildIdentity::isCustomBuild()) {
+        qInfo() << "Skipping upstream update check for custom build"
+                << BuildIdentity::displayVersion();
+        return;
+    }
+
     if (!m_Nam) {
         Q_ASSERT(m_Nam);
         return;

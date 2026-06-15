@@ -4,6 +4,7 @@
 #include <QQmlContext>
 #include <QIcon>
 #include <QQuickStyle>
+#include <QQuickWindow>
 #include <QMutex>
 #include <QtDebug>
 #include <QNetworkProxyFactory>
@@ -48,11 +49,14 @@
 #include "utils.h"
 #include "gui/computermodel.h"
 #include "gui/appmodel.h"
+#include "gui/uiframepacer.h"
+#include "gui/uirenderermanager.h"
 #include "backend/autoupdatechecker.h"
 #include "backend/computermanager.h"
 #include "backend/systemproperties.h"
 #include "streaming/session.h"
 #include "settings/streamingpreferences.h"
+#include "settings/streamprofilemanager.h"
 #include "gui/sdlgamepadkeynavigation.h"
 #include "windowsvblankvirtualization.h"
 
@@ -629,15 +633,12 @@ int main(int argc, char *argv[])
     }
 #endif
 
-#if !defined(Q_OS_WIN32) || QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-    // Moonlight requires the non-threaded renderer because we depend
-    // on being able to control the render thread by blocking in the
-    // main thread (and pumping events from the main thread when needed).
-    // That doesn't work with the threaded renderer which causes all
-    // sorts of odd behavior depending on the platform.
-    //
-    // NB: Windows defaults to the "windows" non-threaded render loop on
-    // Qt 5 and the threaded render loop on Qt 6.
+#if !defined(Q_OS_WIN32)
+    // Keep the conservative non-threaded renderer on platforms where
+    // Moonlight has known Qt/SDL handoff issues. In particular, the default
+    // threaded loop caused long StreamSegue hangs with Qt 5 Snap builds on
+    // Wayland. Windows Qt 6 uses its default threaded loop so scene rendering
+    // does not block native window movement and resizing on the GUI thread.
     qputenv("QSG_RENDER_LOOP", "basic");
 #endif
 
@@ -868,6 +869,8 @@ int main(int argc, char *argv[])
 
     // Apply the initial translation based on user preference
     StreamingPreferences::get()->retranslate();
+    UiRendererManager::configureGraphicsBackend(
+        StreamingPreferences::get());
 
     // Trickily declare the translation for dialog buttons
     QCoreApplication::translate("QPlatformTheme", "&Yes");
@@ -969,6 +972,14 @@ int main(int argc, char *argv[])
                                                    [](QQmlEngine* qmlEngine, QJSEngine*) -> QObject* {
                                                        return StreamingPreferences::get(qmlEngine);
                                                    });
+    qmlRegisterSingletonType<StreamProfileManager>("StreamProfileManager", 1, 0,
+                                                   "StreamProfileManager",
+                                                   [](QQmlEngine*, QJSEngine*) -> QObject* {
+                                                       return StreamProfileManager::get();
+                                                   });
+    qmlRegisterUncreatableType<StreamProfileEditor>("StreamProfileManager", 1, 0,
+                                                    "StreamProfileEditor",
+                                                    "Profile editors are created by StreamProfileManager");
 
     // Create the identity manager on the main thread
     IdentityManager::get();
@@ -993,7 +1004,12 @@ int main(int argc, char *argv[])
         qputenv("QT_QUICK_CONTROLS_MATERIAL_PRIMARY", "#3F51B5");
     }
 
+    UiFramePacer uiFramePacer(StreamingPreferences::get());
+    UiRendererManager uiRendererManager(StreamingPreferences::get());
     QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("UiFramePacer", &uiFramePacer);
+    engine.rootContext()->setContextProperty(
+        "UiRendererManager", &uiRendererManager);
     QString initialView;
     bool hasGUI = true;
 
@@ -1004,12 +1020,12 @@ int main(int argc, char *argv[])
     case GlobalCommandLineParser::StreamRequested:
         {
             initialView = "qrc:/gui/CliStartStreamSegue.qml";
-            StreamingPreferences* preferences = StreamingPreferences::get();
+            StreamingPreferences commandLineDefaults;
             StreamCommandLineParser streamParser;
-            streamParser.parse(app.arguments(), preferences);
+            streamParser.parse(app.arguments(), &commandLineDefaults);
             QString host    = streamParser.getHost();
             QString appName = streamParser.getAppName();
-            auto launcher   = new CliStartStream::Launcher(host, appName, preferences, &app);
+            auto launcher   = new CliStartStream::Launcher(host, appName, nullptr, &app);
             engine.rootContext()->setContextProperty("launcher", launcher);
             break;
         }
@@ -1050,6 +1066,15 @@ int main(int argc, char *argv[])
         engine.load(QUrl(QStringLiteral("qrc:/gui/main.qml")));
         if (engine.rootObjects().isEmpty())
             return -1;
+
+        QQuickWindow* mainWindow =
+            qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+        if (!mainWindow) {
+            qCritical() << "The root QML object is not a QQuickWindow";
+            return -1;
+        }
+        uiFramePacer.setWindow(mainWindow);
+        uiRendererManager.setWindow(mainWindow);
     }
 
     int err = app.exec();

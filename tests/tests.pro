@@ -4,7 +4,7 @@ TEMPLATE = subdirs
 CONFIG += ordered
 
 contains(CONFIG, tests) {
-    SUBDIRS += vrr
+    SUBDIRS += streamprofile-tests vrr
 } else {
-    message(VRR tests are disabled; rerun qmake with CONFIG+=tests)
+    message(Tests are disabled; rerun qmake with CONFIG+=tests)
 }

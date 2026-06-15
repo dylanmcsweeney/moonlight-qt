@@ -30,3 +30,9 @@ contains(CONFIG, tests) {
 load(configure)
 qtCompileTest(SL)
 qtCompileTest(EGL)
+
+# Unit tests are host-side tools and cannot run in the Steam Link cross-build.
+!config_SL {
+    SUBDIRS += tests
+    tests.depends = app
+}

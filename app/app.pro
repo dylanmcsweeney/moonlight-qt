@@ -185,6 +185,8 @@ SOURCES += \
     settings/compatfetcher.cpp \
     settings/mappingfetcher.cpp \
     settings/streamingpreferences.cpp \
+    settings/streamprofilemanager.cpp \
+    settings/buildidentity.cpp \
     streaming/input/abstouch.cpp \
     streaming/input/gamepad.cpp \
     streaming/input/input.cpp \
@@ -196,6 +198,8 @@ SOURCES += \
     streaming/audio/renderers/sdlaud.cpp \
     gui/computermodel.cpp \
     gui/appmodel.cpp \
+    gui/uiframepacer.cpp \
+    gui/uirenderermanager.cpp \
     streaming/bandwidth.cpp \
     streaming/streamutils.cpp \
     backend/autoupdatechecker.cpp \
@@ -228,12 +232,16 @@ HEADERS += \
     cli/quitstream.h \
     cli/startstream.h \
     settings/streamingpreferences.h \
+    settings/streamprofilemanager.h \
+    settings/buildidentity.h \
     streaming/input/input.h \
     streaming/session.h \
     streaming/audio/renderers/renderer.h \
     streaming/audio/renderers/sdl.h \
     gui/computermodel.h \
     gui/appmodel.h \
+    gui/uiframepacer.h \
+    gui/uirenderermanager.h \
     streaming/video/decoder.h \
     streaming/vrrratepolicy.h \
     streaming/bandwidth.h \

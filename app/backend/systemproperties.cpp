@@ -6,6 +6,7 @@
 
 #include "streaming/session.h"
 #include "streaming/streamutils.h"
+#include "settings/buildidentity.h"
 
 #ifdef Q_OS_WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -46,7 +47,7 @@ private:
 
 SystemProperties::SystemProperties()
 {
-    versionString = QString(VERSION_STR);
+    versionString = BuildIdentity::displayVersion();
     hasDesktopEnvironment = WMUtils::isRunningDesktopEnvironment();
     isRunningWayland = WMUtils::isRunningWayland();
     isRunningXWayland = isRunningWayland && QGuiApplication::platformName() == "xcb";

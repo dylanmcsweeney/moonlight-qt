@@ -157,6 +157,9 @@ jobs:
           sudo ldconfig
           scripts/build-appimage.sh
 
+      - name: Run profile tests
+        run: build/build-release/tests/streamprofile-tests
+
       - name: Upload Binaries
         uses: actions/upload-artifact@v6
         with:

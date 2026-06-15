@@ -1,6 +1,8 @@
 #include "startstream.h"
 #include "backend/computermanager.h"
 #include "backend/computerseeker.h"
+#include "cli/commandlineparser.h"
+#include "settings/streamprofilemanager.h"
 #include "streaming/session.h"
 
 #include <QCoreApplication>
@@ -82,6 +84,15 @@ public:
                 if (event.computer->pairState == NvComputer::PS_PAIRED) {
                     m_State = StateSeekApp;
                     m_Computer = event.computer;
+
+                    // Resolve the host's active profile only after we know which
+                    // computer the CLI target matched. Command-line options are
+                    // then applied to this detached snapshot and never persisted.
+                    m_Preferences = StreamProfileManager::get()->createActiveSettings(
+                        m_Computer->uuid, q);
+                    StreamCommandLineParser parser;
+                    parser.parse(QCoreApplication::arguments(), m_Preferences);
+
                     m_TimeoutTimer->start(APP_SEEK_TIMEOUT);
                     emit q->searchingApp();
                 } else {

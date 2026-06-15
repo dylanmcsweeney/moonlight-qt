@@ -8,6 +8,7 @@ import ComputerManager 1.0
 import StreamingPreferences 1.0
 import SystemProperties 1.0
 import SdlGamepadKeyNavigation 1.0
+import StreamProfileManager 1.0
 
 CenteredGridView {
     property ComputerModel computerModel : createModel()
@@ -17,14 +18,29 @@ CenteredGridView {
     activeFocusOnTab: true
     topMargin: 20
     bottomMargin: 5
-    cellWidth: 310; cellHeight: 330;
+    itemWidth: 300
+    itemHeight: 320
+    cellWidth: itemWidth + 10
+    cellHeight: itemHeight + 10
     objectName: qsTr("Computers")
+
+    function fitInitialWindow()
+    {
+        window.fitInitialPcWindow(
+            count, cellWidth, cellHeight, itemWidth, itemHeight)
+        updateMargins()
+    }
 
     Component.onCompleted: {
         // Don't show any highlighted item until interacting with them.
         // We do this here instead of onActivated to avoid losing the user's
         // selection when backing out of a different page of the app.
         currentIndex = -1
+
+        // The StackView, model count, and native window are not all finalized
+        // during child component completion. Fit on the first event-loop pass
+        // so the initial dimensions and margins use the settled geometry.
+        Qt.callLater(fitInitialWindow)
     }
 
     // Note: Any initialization done here that is critical for streaming must
@@ -107,10 +123,36 @@ CenteredGridView {
     model: computerModel
 
     delegate: NavigableItemDelegate {
-        width: 300; height: 320;
+        id: pcDelegate
+        width: pcGrid.itemWidth
+        height: pcGrid.itemHeight
         grid: pcGrid
 
         property alias pcContextMenu : pcContextMenuLoader.item
+
+        background: Rectangle {
+            radius: 5
+            color: pcDelegate.highlighted ? "#454752" :
+                   (pcDelegate.hovered ? "#333333" : "#292929")
+            border.width: 1
+            border.color: pcDelegate.highlighted ? "#7f91e8" : "#414141"
+        }
+
+        function openProfilesDialog()
+        {
+            profilesDialog.hostUuid = model.uuid
+            profilesDialog.pcName = model.name
+            profilesDialog.refresh()
+            profilesDialog.open()
+        }
+
+        function openActiveProfileEditor()
+        {
+            window.openProfileEditor(
+                StreamProfileManager.createEditor(model.uuid,
+                                                  model.activeProfileId,
+                                                  false))
+        }
 
         Image {
             id: pcIcon
@@ -153,11 +195,134 @@ CenteredGridView {
 
             width: parent.width
             anchors.top: pcIcon.bottom
-            anchors.bottom: parent.bottom
-            font.pointSize: 36
+            anchors.bottom: profileFooter.top
+            anchors.bottomMargin: 4
+            leftPadding: 8
+            rightPadding: 8
+            font.pointSize: 24
+            verticalAlignment: Text.AlignVCenter
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.Wrap
             elide: Text.ElideRight
+            maximumLineCount: 2
+
+            ToolTip.visible: pcDelegate.hovered && truncated
+            ToolTip.delay: 1000
+            ToolTip.timeout: 4000
+            ToolTip.text: model.name
+        }
+
+        Rectangle {
+            id: profileFooter
+            visible: StreamingPreferences.showPcProfileControls
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.margins: 5
+            height: visible ? 52 : 0
+            radius: 5
+            color: pcDelegate.highlighted ? "#454b68" : "#383838"
+            border.width: 1
+            border.color: pcDelegate.highlighted ? "#899cff" : "#505050"
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.margins: 2
+                spacing: 2
+
+                Button {
+                    id: profileSelectorButton
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    focusPolicy: Qt.NoFocus
+                    padding: 5
+                    flat: true
+
+                    contentItem: Item {
+                        Column {
+                            id: profileTextColumn
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 0
+
+                            Label {
+                                width: parent.width
+                                text: qsTr("ACTIVE PROFILE")
+                                font.pointSize: 7
+                                color: "#a8a8a8"
+                            }
+
+                            RowLayout {
+                                width: parent.width
+                                spacing: 6
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: model.activeProfileName
+                                    font.pointSize: 9
+                                    color: "white"
+                                    elide: Text.ElideRight
+                                }
+
+                                Label {
+                                    text: "\u2026"
+                                    font.pointSize: 14
+                                    color: "#d0d0d0"
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                            }
+                        }
+                    }
+
+                    background: Rectangle {
+                        radius: 4
+                        color: profileSelectorButton.down ? "#606060" :
+                               (profileSelectorButton.hovered ? "#4b4b4b" :
+                                                                "transparent")
+                    }
+
+                    onClicked: pcDelegate.openProfilesDialog()
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 4000
+                    ToolTip.text: qsTr("Open profile list")
+                }
+
+                RoundButton {
+                    id: profileSettingsButton
+                    Layout.preferredWidth: 48
+                    Layout.fillHeight: true
+                    focusPolicy: Qt.NoFocus
+                    icon.source: "qrc:/res/settings.svg"
+                    icon.width: 34
+                    icon.height: 34
+
+                    background: Rectangle {
+                        radius: 4
+                        color: profileSettingsButton.down ? "#606060" :
+                               (profileSettingsButton.hovered ? "#4b4b4b" :
+                                                               "transparent")
+                    }
+
+                    onClicked: pcDelegate.openActiveProfileEditor()
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 4000
+                    ToolTip.text: qsTr("Edit active streaming profile")
+                }
+            }
+        }
+
+        Label {
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottom: parent.top
+            anchors.bottomMargin: 2
+            visible: parent.highlighted &&
+                     SdlGamepadKeyNavigation.getConnectedGamepads() > 0
+            text: qsTr("A Open   X Settings   Y Menu   Start Global")
+            font.pointSize: 9
+            color: "skyblue"
         }
 
         Loader {
@@ -191,6 +356,14 @@ CenteredGridView {
                         computerModel.testConnectionForComputer(index)
                         testConnectionDialog.open()
                     }
+                }
+                NavigableMenuItem {
+                    text: qsTr("Profiles…")
+                    onTriggered: pcDelegate.openProfilesDialog()
+                }
+                NavigableMenuItem {
+                    text: qsTr("Streaming Settings…")
+                    onTriggered: pcDelegate.openActiveProfileEditor()
                 }
 
                 NavigableMenuItem {
@@ -273,6 +446,13 @@ CenteredGridView {
             pcContextMenu.open()
         }
 
+        Keys.onPressed: {
+            if (event.key === Qt.Key_F2) {
+                pcDelegate.openActiveProfileEditor()
+                event.accepted = true
+            }
+        }
+
         Keys.onDeletePressed: {
             deletePcDialog.pcIndex = index
             deletePcDialog.pcName = model.name
@@ -299,6 +479,57 @@ CenteredGridView {
         standardButtons: Dialog.Cancel
         onRejected: {
             // FIXME: We should interrupt pairing here
+        }
+    }
+
+    NavigableDialog {
+        id: profilesDialog
+        property string hostUuid
+        property string pcName
+        property var profileEntries: []
+        title: qsTr("Profiles for %1").arg(pcName)
+        standardButtons: Dialog.Cancel
+
+        function refresh() {
+            profileEntries = StreamProfileManager.profiles(hostUuid)
+        }
+
+        onOpened: {
+            if (profileButtons.count > 0) {
+                profileButtons.itemAt(0).forceActiveFocus(Qt.TabFocus)
+            }
+        }
+
+        ColumnLayout {
+            spacing: 5
+
+            Repeater {
+                id: profileButtons
+                model: profilesDialog.profileEntries
+
+                Button {
+                    Layout.fillWidth: true
+                    text: (modelData.active ? "● " : "") + modelData.name
+                    highlighted: modelData.active
+                    onClicked: {
+                        StreamProfileManager.activateProfile(profilesDialog.hostUuid,
+                                                             modelData.profileId)
+                        profilesDialog.close()
+                    }
+                }
+            }
+
+            Button {
+                Layout.fillWidth: true
+                opacity: 0.55
+                text: qsTr("New Profile")
+                onClicked: {
+                    var editor = StreamProfileManager.createEditor(
+                                     profilesDialog.hostUuid, "", true)
+                    profilesDialog.close()
+                    window.openProfileEditor(editor)
+                }
+            }
         }
     }
 

@@ -2,7 +2,11 @@
 #include "settings/streamprofilemanager.h"
 
 AppModel::AppModel(QObject *parent)
-    : QAbstractListModel(parent)
+    : QAbstractListModel(parent),
+      m_Computer(nullptr),
+      m_ComputerManager(nullptr),
+      m_CurrentGameId(0),
+      m_ShowHiddenGames(false)
 {
     connect(&m_BoxArtManager, &BoxArtManager::boxArtLoadComplete,
             this, &AppModel::handleBoxArtLoaded);
@@ -38,6 +42,30 @@ QString AppModel::getRunningAppName()
     }
 
     return nullptr;
+}
+
+QString AppModel::getComputerUuid()
+{
+    return m_Computer ? m_Computer->uuid : QString();
+}
+
+QString AppModel::getComputerName()
+{
+    return m_Computer ? m_Computer->name : QString();
+}
+
+QString AppModel::getActiveProfileId()
+{
+    return m_Computer ?
+               StreamProfileManager::get()->activeProfileId(m_Computer->uuid) :
+               QString();
+}
+
+QString AppModel::getActiveProfileName()
+{
+    return m_Computer ?
+               StreamProfileManager::get()->activeProfileName(m_Computer->uuid) :
+               QString();
 }
 
 Session* AppModel::createSessionForApp(int appIndex)

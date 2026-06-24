@@ -15,8 +15,20 @@ Flickable {
     contentHeight: settingsColumn.implicitHeight + 20
     boundsBehavior: Flickable.OvershootBounds
 
+    function preferredWindowWidth() {
+        return Math.max(window.initialPcWindowWidth, 900)
+    }
+
+    function preferredWindowHeight() {
+        return window.header.height + contentHeight + 40
+    }
+
     StackView.onActivated: {
         SdlGamepadKeyNavigation.setUiNavMode(true)
+        Qt.callLater(function() {
+            window.fitWindowForView(preferredWindowWidth(),
+                                    preferredWindowHeight())
+        })
         if (SdlGamepadKeyNavigation.getConnectedGamepads() > 0) {
             defaultProfileButton.forceActiveFocus(Qt.TabFocus)
         }
@@ -345,7 +357,7 @@ Flickable {
                 }
 
                 CheckBox {
-                    text: qsTr("Show streaming profile controls on PC cards")
+                    text: qsTr("Show streaming profile controls on PC and app pages")
                     checked: StreamingPreferences.showPcProfileControls
                     onToggled: {
                         StreamingPreferences.showPcProfileControls = checked
@@ -355,7 +367,7 @@ Flickable {
                     ToolTip.delay: 1000
                     ToolTip.timeout: 5000
                     ToolTip.visible: hovered
-                    ToolTip.text: qsTr("Hide the profile selector and settings button for a simpler TV interface. They remain available from each PC's context menu.")
+                    ToolTip.text: qsTr("Hide the profile selector and settings button for a simpler TV interface. They remain available from each PC and app context menu.")
                 }
             }
         }

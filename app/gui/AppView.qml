@@ -1,10 +1,12 @@
 import QtQuick 2.9
 import QtQuick.Controls 2.2
 import QtQuick.Controls.Material 2.2
+import QtQuick.Layouts 1.3
 
 import AppModel 1.0
 import ComputerManager 1.0
 import SdlGamepadKeyNavigation 1.0
+import StreamProfileManager 1.0
 
 CenteredGridView {
     property int computerIndex
@@ -12,6 +14,10 @@ CenteredGridView {
     property bool activated
     property bool showHiddenGames
     property bool showGames
+    property string hostUuid: appModel.getComputerUuid()
+    property string hostName: appModel.getComputerName()
+    property string activeProfileId: appModel.getActiveProfileId()
+    property string activeProfileName: appModel.getActiveProfileName()
 
     id: appGrid
     focus: true
@@ -34,11 +40,16 @@ CenteredGridView {
         // We do this here instead of onActivated to avoid losing the user's
         // selection when backing out of a different page of the app.
         currentIndex = -1
+        refreshProfileControls()
     }
 
     StackView.onActivated: {
         appModel.computerLost.connect(computerLost)
         activated = true
+        refreshProfileControls()
+        window.fitWindowForView(preferredWindowWidth(),
+                                preferredWindowHeight(),
+                                true)
 
         // Highlight the first item if a gamepad is connected
         if (currentIndex === -1 && SdlGamepadKeyNavigation.getConnectedGamepads() > 0) {
@@ -69,6 +80,46 @@ CenteredGridView {
         var model = Qt.createQmlObject('import AppModel 1.0; AppModel {}', parent, '')
         model.initialize(ComputerManager, computerIndex, showHiddenGames)
         return model
+    }
+
+    function refreshProfileControls()
+    {
+        hostUuid = appModel.getComputerUuid()
+        hostName = appModel.getComputerName()
+        activeProfileId = appModel.getActiveProfileId()
+        activeProfileName = appModel.getActiveProfileName()
+    }
+
+    function openProfilesDialog()
+    {
+        profilesDialog.refresh()
+        profilesDialog.open()
+    }
+
+    function openActiveProfileEditor()
+    {
+        window.openProfileEditor(
+            StreamProfileManager.createEditor(hostUuid, activeProfileId, false))
+    }
+
+    function preferredWindowWidth()
+    {
+        return Math.max(window.initialPcWindowWidth, 900)
+    }
+
+    function preferredWindowHeight()
+    {
+        return window.header.height + topMargin + itemHeight + bottomMargin + 40
+    }
+
+    Connections {
+        target: StreamProfileManager
+
+        function onProfilesChanged(changedHostUuid) {
+            if (changedHostUuid === appGrid.hostUuid) {
+                appGrid.refreshProfileControls()
+            }
+        }
     }
 
     model: appModel
@@ -309,6 +360,14 @@ CenteredGridView {
                     visible: model.running
                 }
                 NavigableMenuItem {
+                    text: qsTr("Profiles…")
+                    onTriggered: appGrid.openProfilesDialog()
+                }
+                NavigableMenuItem {
+                    text: qsTr("Streaming Settings…")
+                    onTriggered: appGrid.openActiveProfileEditor()
+                }
+                NavigableMenuItem {
                     checkable: true
                     checked: model.directLaunch
                     text: qsTr("Direct Launch")
@@ -376,6 +435,57 @@ CenteredGridView {
         }
 
         onAccepted: quitApp()
+    }
+
+    NavigableDialog {
+        id: profilesDialog
+        property var profileEntries: []
+        title: qsTr("Profiles for %1").arg(appGrid.hostName)
+        standardButtons: Dialog.Cancel
+
+        function refresh() {
+            appGrid.refreshProfileControls()
+            profileEntries = StreamProfileManager.profiles(appGrid.hostUuid)
+        }
+
+        onOpened: {
+            if (appProfileButtons.count > 0) {
+                appProfileButtons.itemAt(0).forceActiveFocus(Qt.TabFocus)
+            }
+        }
+
+        ColumnLayout {
+            spacing: 5
+
+            Repeater {
+                id: appProfileButtons
+                model: profilesDialog.profileEntries
+
+                Button {
+                    Layout.fillWidth: true
+                    text: (modelData.active ? "● " : "") + modelData.name
+                    highlighted: modelData.active
+                    onClicked: {
+                        StreamProfileManager.activateProfile(appGrid.hostUuid,
+                                                             modelData.profileId)
+                        appGrid.refreshProfileControls()
+                        profilesDialog.close()
+                    }
+                }
+            }
+
+            Button {
+                Layout.fillWidth: true
+                opacity: 0.55
+                text: qsTr("New Profile")
+                onClicked: {
+                    var editor = StreamProfileManager.createEditor(
+                                     appGrid.hostUuid, "", true)
+                    profilesDialog.close()
+                    window.openProfileEditor(editor)
+                }
+            }
+        }
     }
 
     ScrollBar.vertical: ScrollBar {}

@@ -61,6 +61,43 @@ ApplicationWindow {
         initialPcWindowFitTimer.restart()
     }
 
+    function fitWindowForView(preferredWidth, preferredHeight, allowShrink) {
+        if (!SystemProperties.hasDesktopEnvironment ||
+                StreamingPreferences.uiDisplayMode !=
+                    StreamingPreferences.UI_WINDOWED) {
+            return
+        }
+
+        var margin = 8
+        var availableY = Screen.virtualY
+        var availableWidth = Screen.desktopAvailableWidth
+        var availableHeight = Screen.desktopAvailableHeight
+        var availableBottom = availableY + availableHeight
+        var maxWidth = Math.floor(availableWidth * 0.95)
+        var maxHeight = Math.min(Math.floor(availableHeight * 0.90),
+                                 availableBottom - y - margin)
+        var minWidth = allowShrink ? 700 : Math.min(Math.max(700, width), maxWidth)
+        var minHeight = allowShrink ? 450 : Math.min(Math.max(450, height), maxHeight)
+        var newWidth = Math.max(minWidth,
+                                Math.min(maxWidth,
+                                         Math.max(700, preferredWidth)))
+        var newHeight = Math.max(minHeight,
+                                 Math.min(maxHeight,
+                                          Math.max(450, preferredHeight)))
+
+        if (Math.abs(width - newWidth) > 2) {
+            width = newWidth
+        }
+        if (Math.abs(height - newHeight) > 2) {
+            height = newHeight
+        }
+
+        if (stackView.currentItem &&
+                stackView.currentItem.updateMargins) {
+            stackView.currentItem.updateMargins()
+        }
+    }
+
     Timer {
         id: initialPcWindowFitTimer
         interval: 50
@@ -536,6 +573,117 @@ ApplicationWindow {
                 ToolTip.timeout: 3000
                 ToolTip.visible: hovered
                 ToolTip.text: qsTr("Settings") + (settingsShortcut.nativeText ? (" ("+settingsShortcut.nativeText+")") : "")
+            }
+        }
+
+        TextMetrics {
+            id: appTitleMetrics
+            font: titleLabel.font
+            text: stackView.currentItem instanceof AppView ?
+                      stackView.currentItem.objectName : ""
+        }
+
+        Rectangle {
+            id: appProfileToolbarGroup
+            visible: stackView.currentItem instanceof AppView &&
+                     StreamingPreferences.showPcProfileControls &&
+                     toolBar.width > 900
+            width: Math.min(320,
+                            Math.max(220,
+                                     appProfileToolbarText.implicitWidth + 126))
+            height: toolBar.height - 14
+            x: Math.min(toolBar.width - width - 150,
+                        Math.max(70,
+                                 toolBar.width / 2 +
+                                 appTitleMetrics.width / 2 + 18))
+            anchors.verticalCenter: parent.verticalCenter
+            radius: 6
+            color: "#34405f"
+            border.width: 1
+            border.color: "#7081d8"
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.margins: 3
+                spacing: 3
+
+                Label {
+                    text: qsTr("PROFILE")
+                    color: "#c6cffd"
+                    font.pointSize: 7
+                    Layout.leftMargin: 5
+                    Layout.preferredWidth: 46
+                    Layout.fillHeight: true
+                    verticalAlignment: Text.AlignVCenter
+                }
+
+                Button {
+                    id: appProfileToolbarButton
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    focusPolicy: Qt.NoFocus
+                    flat: true
+
+                    contentItem: RowLayout {
+                        spacing: 6
+
+                        Label {
+                            id: appProfileToolbarText
+                            Layout.fillWidth: true
+                            text: stackView.currentItem instanceof AppView ?
+                                      stackView.currentItem.activeProfileName : ""
+                            color: "white"
+                            font.pointSize: 10
+                            elide: Text.ElideRight
+                            verticalAlignment: Text.AlignVCenter
+                        }
+
+                        Label {
+                            text: "\u2026"
+                            color: "#d0d0d0"
+                            font.pointSize: 15
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+
+                    background: Rectangle {
+                        radius: 4
+                        color: appProfileToolbarButton.down ? "#6374d2" :
+                               (appProfileToolbarButton.hovered ? "#5364c2" :
+                                                                  "transparent")
+                    }
+
+                    onClicked: stackView.currentItem.openProfilesDialog()
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 3000
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Select streaming profile")
+                }
+
+                ToolButton {
+                    id: appProfileSettingsToolbarButton
+                    Layout.preferredWidth: 42
+                    Layout.fillHeight: true
+                    focusPolicy: Qt.NoFocus
+                    icon.source: "qrc:/res/settings.svg"
+                    icon.width: 29
+                    icon.height: 29
+
+                    background: Rectangle {
+                        radius: 4
+                        color: appProfileSettingsToolbarButton.down ? "#6374d2" :
+                               (appProfileSettingsToolbarButton.hovered ? "#5364c2" :
+                                                                          "transparent")
+                    }
+
+                    onClicked: stackView.currentItem.openActiveProfileEditor()
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 3000
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Edit active streaming profile")
+                }
             }
         }
     }

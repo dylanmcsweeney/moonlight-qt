@@ -130,6 +130,14 @@ Flickable {
         }
     }
 
+    function preferredWindowWidth() {
+        return Math.max(window.initialPcWindowWidth, 1280)
+    }
+
+    function preferredWindowHeight() {
+        return window.header.height + contentHeight + 40
+    }
+
     boundsBehavior: Flickable.OvershootBounds
 
     contentWidth: settingsColumn1.width > settingsColumn2.width ? settingsColumn1.width : settingsColumn2.width
@@ -189,6 +197,10 @@ Flickable {
         // This enables Tab and BackTab based navigation rather than arrow keys.
         // It is required to shift focus between controls on the settings page.
         SdlGamepadKeyNavigation.setUiNavMode(true)
+        Qt.callLater(function() {
+            window.fitWindowForView(preferredWindowWidth(),
+                                    preferredWindowHeight())
+        })
 
         // Highlight the first item if a gamepad is connected
         if (SdlGamepadKeyNavigation.getConnectedGamepads() > 0) {

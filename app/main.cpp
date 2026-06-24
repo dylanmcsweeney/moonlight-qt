@@ -14,6 +14,7 @@
 #include <QElapsedTimer>
 #include <QTemporaryFile>
 #include <QRegularExpression>
+#include <QSslSocket>
 
 #ifdef Q_OS_UNIX
 #include <sys/socket.h>
@@ -423,6 +424,32 @@ void configureSignalHandlers()
 
 #endif
 
+static void configureTlsBackend()
+{
+#if defined(Q_OS_WIN32) && QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    // Prefer OpenSSL over Schannel on Windows. We have observed intermittent
+    // crashes in NCrypt during concurrent HTTPS serverinfo polling.
+    const QList<QString> availableBackends = QSslSocket::availableBackends();
+
+    if (availableBackends.contains(QStringLiteral("openssl"))) {
+        if (QSslSocket::setActiveBackend(QStringLiteral("openssl"))) {
+            qInfo() << "Using Qt TLS backend:" << QSslSocket::activeBackend()
+                    << "available:" << availableBackends;
+        }
+        else {
+            qWarning() << "Failed to activate Qt OpenSSL TLS backend; using:"
+                       << QSslSocket::activeBackend()
+                       << "available:" << availableBackends;
+        }
+    }
+    else {
+        qWarning() << "Qt OpenSSL TLS backend unavailable; using:"
+                   << QSslSocket::activeBackend()
+                   << "available:" << availableBackends;
+    }
+#endif
+}
+
 int main(int argc, char *argv[])
 {
     SDL_SetMainReady();
@@ -765,6 +792,7 @@ int main(int argc, char *argv[])
     }
 
     QGuiApplication app(argc, argv);
+    configureTlsBackend();
 
 #ifdef Q_OS_DARWIN
     // macOS defaults "Keyboard navigation" to text fields and lists only, which

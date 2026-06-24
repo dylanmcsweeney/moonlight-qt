@@ -233,6 +233,16 @@ echo Deploying Qt dependencies
 %WINDEPLOYQT_CMD% --dir %DEPLOY_FOLDER% --%BUILD_CONFIG% --qmldir %SOURCE_ROOT%\app\gui --no-opengl-sw --no-compiler-runtime --no-sql %WINDEPLOYQT_ARGS% %BUILD_FOLDER%\app\%BUILD_CONFIG%\Moonlight.exe
 if !ERRORLEVEL! NEQ 0 goto Error
 
+if exist "%QT_PATH%\..\plugins\tls\qopensslbackend.dll" (
+    echo Copying Qt OpenSSL TLS backend
+    rem We prefer OpenSSL at runtime to avoid intermittent Schannel/NCrypt crashes.
+    if not exist "%DEPLOY_FOLDER%\tls" mkdir "%DEPLOY_FOLDER%\tls"
+    copy "%QT_PATH%\..\plugins\tls\qopensslbackend.dll" "%DEPLOY_FOLDER%\tls\"
+    if !ERRORLEVEL! NEQ 0 goto Error
+) else (
+    echo Qt OpenSSL TLS backend not found; using deployed Qt TLS backends only
+)
+
 echo Deleting unused files
 rem Qt 5.x directories
 rmdir /s /q %DEPLOY_FOLDER%\QtQuick\Controls.2\Fusion

@@ -50,6 +50,12 @@ CenteredGridView {
         // Setup signals on CM
         ComputerManager.computerAddCompleted.connect(addComplete)
 
+        if (window.initialPcWindowSizeApplied) {
+            window.fitWindowForView(window.initialPcWindowWidth,
+                                    window.initialPcWindowHeight,
+                                    true)
+        }
+
         // Highlight the first item if a gamepad is connected
         if (currentIndex === -1 && SdlGamepadKeyNavigation.getConnectedGamepads() > 0) {
             currentIndex = 0

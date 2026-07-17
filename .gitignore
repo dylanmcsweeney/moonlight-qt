@@ -8,3 +8,5 @@ libs/
 wix/**/obj/
 config.tests/*/.qmake.stash
 config.tests/*/Makefile
+MoonlightPortable*.zip
+MoonlightPortable*.7z

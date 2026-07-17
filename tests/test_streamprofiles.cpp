@@ -190,7 +190,7 @@ void StreamProfileTests::versionIdentity()
     QCOMPARE(BuildIdentity::buildLabel(),
              QStringLiteral("beta (mastershogo's version)"));
     QCOMPARE(BuildIdentity::displayVersion(),
-             QStringLiteral("7.0.1.0-beta (mastershogo's version)"));
+             QStringLiteral("7.0.4.0-beta (mastershogo's version)"));
     QVERIFY(BuildIdentity::isCustomBuild());
 
     QCOMPARE(BuildIdentity::displayVersion(QStringLiteral("7.0.0.0"),

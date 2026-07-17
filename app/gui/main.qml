@@ -19,6 +19,17 @@ ApplicationWindow {
     property bool initialPcWindowSizeApplied: false
     property real initialPcWindowWidth: 0
     property real initialPcWindowHeight: 0
+    readonly property int appToolbarBaseMinimumWidth: 900
+    readonly property int appToolbarRightReserve: 150
+    readonly property int appToolbarTitleGap: 18
+    readonly property int appToolbarMinimumWidth:
+        !StreamingPreferences.showPcProfileControls ?
+            appToolbarBaseMinimumWidth :
+            Math.ceil(Math.max(
+                appToolbarBaseMinimumWidth,
+                appTitleMetrics.width +
+                    2 * (appProfileToolbarGroup.width +
+                         appToolbarTitleGap + appToolbarRightReserve)))
 
     // Set by SettingsView to force the back operation to pop all
     // pages except the initial view. This is required when doing
@@ -587,15 +598,16 @@ ApplicationWindow {
             id: appProfileToolbarGroup
             visible: stackView.currentItem instanceof AppView &&
                      StreamingPreferences.showPcProfileControls &&
-                     toolBar.width > 900
+                     toolBar.width >= window.appToolbarMinimumWidth
             width: Math.min(320,
                             Math.max(220,
                                      appProfileToolbarText.implicitWidth + 126))
             height: toolBar.height - 14
-            x: Math.min(toolBar.width - width - 150,
+            x: Math.min(toolBar.width - width - window.appToolbarRightReserve,
                         Math.max(70,
                                  toolBar.width / 2 +
-                                 appTitleMetrics.width / 2 + 18))
+                                 appTitleMetrics.width / 2 +
+                                 window.appToolbarTitleGap))
             anchors.verticalCenter: parent.verticalCenter
             radius: 6
             color: "#34405f"

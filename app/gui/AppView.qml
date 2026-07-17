@@ -104,7 +104,8 @@ CenteredGridView {
 
     function preferredWindowWidth()
     {
-        return Math.max(window.initialPcWindowWidth, 900)
+        return Math.max(window.initialPcWindowWidth,
+                        window.appToolbarMinimumWidth)
     }
 
     function preferredWindowHeight()

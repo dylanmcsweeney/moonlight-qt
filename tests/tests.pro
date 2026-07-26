@@ -3,8 +3,10 @@
 TEMPLATE = subdirs
 CONFIG += ordered
 
+streamprofiles.file = streamprofile-tests.pro
+
 contains(CONFIG, tests) {
-    SUBDIRS += streamprofile-tests vrr
+    SUBDIRS += streamprofiles vrr
 } else {
     message(Tests are disabled; rerun qmake with CONFIG+=tests)
 }

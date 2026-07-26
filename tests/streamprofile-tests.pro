@@ -14,11 +14,13 @@ SOURCES += \
     ../app/cli/commandlineparser.cpp \
     ../app/settings/buildidentity.cpp \
     ../app/settings/streamingpreferences.cpp \
-    ../app/settings/streamprofilemanager.cpp
+    ../app/settings/streamprofilemanager.cpp \
+    ../app/streaming/vrrratepolicy.cpp
 
 HEADERS += \
     ../app/settings/buildidentity.h \
     ../app/settings/streamingpreferences.h \
-    ../app/settings/streamprofilemanager.h
+    ../app/settings/streamprofilemanager.h \
+    ../app/streaming/vrrratepolicy.h
 
 RESOURCES += tests.qrc

@@ -16,6 +16,8 @@
     <MediaTemplate CompressionLevel="high" EmbedCab="yes" />
 
     <Property Id="APPDATAFOLDER" Value="%LOCALAPPDATA%\Moonlight Game Streaming Project" />
+    <!-- The Burn bundle overrides this, but direct MSI installs still need a valid default. -->
+    <Property Id="ADDDESKTOPSHORTCUT" Value="1" Secure="yes" />
 
     <!-- There's no way to delete a registry key on uninstall but not major upgrade, so
         we have to roll our own deletion via custom action -->

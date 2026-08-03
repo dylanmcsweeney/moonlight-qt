@@ -175,10 +175,10 @@ Flickable {
                     textRole: "text"
                     model: ListModel {
                         id: uiGraphicsBackendModel
-                        ListElement { text: qsTr("Direct3D 12 (Recommended)"); value: StreamingPreferences.UI_GRAPHICS_D3D12 }
+                        ListElement { text: qsTr("Automatic (Recommended)"); value: StreamingPreferences.UI_GRAPHICS_AUTOMATIC }
+                        ListElement { text: qsTr("Direct3D 12"); value: StreamingPreferences.UI_GRAPHICS_D3D12 }
                         ListElement { text: qsTr("Direct3D 11"); value: StreamingPreferences.UI_GRAPHICS_D3D11 }
                         ListElement { text: qsTr("OpenGL"); value: StreamingPreferences.UI_GRAPHICS_OPENGL }
-                        ListElement { text: qsTr("Automatic (Qt default)"); value: StreamingPreferences.UI_GRAPHICS_AUTOMATIC }
                     }
 
                     Component.onCompleted: {

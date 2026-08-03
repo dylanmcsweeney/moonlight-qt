@@ -181,11 +181,7 @@ void StreamingPreferences::resetToStock()
     windowMode = recommendedFullScreenMode;
     uiDisplayMode = UIDisplayMode::UI_WINDOWED;
     uiFramePacingMode = UIFramePacingMode::UI_FRAME_PACING_DISABLED;
-#ifdef Q_OS_WIN
-    uiGraphicsBackend = UIGraphicsBackend::UI_GRAPHICS_D3D12;
-#else
     uiGraphicsBackend = UIGraphicsBackend::UI_GRAPHICS_AUTOMATIC;
-#endif
     uiD3D11SwapchainMode = UID3D11SwapchainMode::UI_D3D11_FLIP;
     language = Language::LANG_AUTO;
 }
@@ -210,11 +206,7 @@ void StreamingPreferences::loadLegacySettings(QSettings& settings)
                        static_cast<int>(uiGraphicsBackend)).toInt());
     if (uiGraphicsBackend < UI_GRAPHICS_AUTOMATIC ||
             uiGraphicsBackend > UI_GRAPHICS_OPENGL) {
-#ifdef Q_OS_WIN
-        uiGraphicsBackend = UI_GRAPHICS_D3D12;
-#else
         uiGraphicsBackend = UI_GRAPHICS_AUTOMATIC;
-#endif
     }
     uiD3D11SwapchainMode = static_cast<UID3D11SwapchainMode>(
         settings.value(SER_UID3D11SWAPCHAINMODE,

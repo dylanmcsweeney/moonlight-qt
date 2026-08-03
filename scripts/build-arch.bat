@@ -233,6 +233,22 @@ echo Deploying Qt dependencies
 %WINDEPLOYQT_CMD% --dir %DEPLOY_FOLDER% --%BUILD_CONFIG% --qmldir %SOURCE_ROOT%\app\gui --no-opengl-sw --no-compiler-runtime --no-sql %WINDEPLOYQT_ARGS% %BUILD_FOLDER%\app\%BUILD_CONFIG%\Moonlight.exe
 if !ERRORLEVEL! NEQ 0 goto Error
 
+rem Qt's D3D12 RHI compiles some shaders at runtime with DXC. Copy the
+rem target-architecture SDK pair explicitly so clean systems can use D3D12.
+set DXC_PATH=%WindowsSdkVerBinPath%%ARCH%
+if not exist "!DXC_PATH!\dxcompiler.dll" (
+    echo Required D3D12 runtime is missing: !DXC_PATH!\dxcompiler.dll
+    goto Error
+)
+if not exist "!DXC_PATH!\dxil.dll" (
+    echo Required D3D12 runtime is missing: !DXC_PATH!\dxil.dll
+    goto Error
+)
+copy "!DXC_PATH!\dxcompiler.dll" "%DEPLOY_FOLDER%\"
+if !ERRORLEVEL! NEQ 0 goto Error
+copy "!DXC_PATH!\dxil.dll" "%DEPLOY_FOLDER%\"
+if !ERRORLEVEL! NEQ 0 goto Error
+
 if exist "%QT_PATH%\..\plugins\tls\qopensslbackend.dll" (
     echo Copying Qt OpenSSL TLS backend
     rem We prefer OpenSSL at runtime to avoid intermittent Schannel/NCrypt crashes.

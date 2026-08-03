@@ -303,6 +303,14 @@ void StreamProfileTests::uiProfileControlsPreference()
 void StreamProfileTests::uiGraphicsPreference()
 {
     QSettings settings;
+    settings.remove(QStringLiteral("uigraphicsbackend"));
+    settings.sync();
+
+    StreamingPreferences defaults;
+    defaults.reload();
+    QCOMPARE(defaults.uiGraphicsBackend,
+             StreamingPreferences::UI_GRAPHICS_AUTOMATIC);
+
     settings.setValue(
         QStringLiteral("uigraphicsbackend"),
         static_cast<int>(StreamingPreferences::UI_GRAPHICS_OPENGL));
@@ -334,13 +342,8 @@ void StreamProfileTests::uiGraphicsPreference()
     settings.setValue(QStringLiteral("uid3d11swapchainmode"), 999);
     settings.sync();
     preferences.reload();
-#ifdef Q_OS_WIN
-    QCOMPARE(preferences.uiGraphicsBackend,
-             StreamingPreferences::UI_GRAPHICS_D3D12);
-#else
     QCOMPARE(preferences.uiGraphicsBackend,
              StreamingPreferences::UI_GRAPHICS_AUTOMATIC);
-#endif
     QCOMPARE(preferences.uiD3D11SwapchainMode,
              StreamingPreferences::UI_D3D11_FLIP);
 }

@@ -1,4 +1,11 @@
-# Moonlight PC
+# Moonlight PC (MasterShogo's Version)
+
+This is a fork of Nonary's fantastic fork of the fantastic original Moonlight application over at [Moonlight PC](https://github.com/moonlight-stream/moonlight-qt). This program, along with Sunshine, Apollo, and Vibepollo, are some of my favorite pieces of software because they enable us to have good device-to-device streaming entirely within our own homes with incredible quality and performance.
+
+My version is just the beginnings of some GUI changes to allow for settings profiles, so that different hosts can have different settings and multiple profiles per host. Additionally I have improved the performance of the QT GUI and added some rendering options to help work around annoying bugs on different platforms. This is the beginning of what will probably be an entirely new GUI that wraps the streaming guts of the the current Moonlight application but with a new application name, but for now it is just a fork of the Moonlight project.
+
+Full disclosure, I am a professional software developer and I care deeply for high quality software, but I did not write most of my changes. In fact I have never done QT development at all! Most of the code in my changes are the result of quite a bit of back and forth debate between myself and GPT 5.6 Sol. But it did most of the work.
+
 
 [Moonlight PC](https://moonlight-stream.org) is an open source PC client for NVIDIA GameStream and [Sunshine](https://github.com/LizardByte/Sunshine).
 

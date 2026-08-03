@@ -468,9 +468,6 @@ wayland {
     SOURCES += streaming/video/ffmpeg-renderers/pacer/waylandvsyncsource.cpp
     HEADERS += streaming/video/ffmpeg-renderers/pacer/waylandvsyncsource.h
 }
-!disable-h264bitstream {
-    DEFINES += HAVE_H264BITSTREAM
-}
 
 RESOURCES += \
     resources.qrc \
@@ -532,8 +529,8 @@ win32:CONFIG(release, debug|release): LIBS += -L$$OUT_PWD/../h264bitstream/relea
 else:win32:CONFIG(debug, debug|release): LIBS += -L$$OUT_PWD/../h264bitstream/debug/ -lh264bitstream
 else:unix: LIBS += -L$$OUT_PWD/../h264bitstream/ -lh264bitstream
 
-INCLUDEPATH += $$PWD/../h264bitstream/h264bitstream
-DEPENDPATH += $$PWD/../h264bitstream/h264bitstream
+INCLUDEPATH += $$PWD/../h264bitstream
+DEPENDPATH += $$PWD/../h264bitstream
 
 !winrt {
     win32:CONFIG(release, debug|release): LIBS += -L$$OUT_PWD/../AntiHooking/release/ -lAntiHooking

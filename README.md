@@ -6,7 +6,7 @@ My version is just the beginnings of some GUI changes to allow for settings prof
 
 Full disclosure, I am a professional software developer and I care deeply for high quality software, but I did not write most of my changes. In fact I have never done QT development at all! Most of the code in my changes are the result of quite a bit of back and forth debate between myself and GPT 5.6 Sol. But it did most of the work.
 
-
+## Original README
 [Moonlight PC](https://moonlight-stream.org) is an open source PC client for NVIDIA GameStream and [Sunshine](https://github.com/LizardByte/Sunshine).
 
 Moonlight also has mobile versions for [Android](https://github.com/moonlight-stream/moonlight-android) and [iOS](https://github.com/moonlight-stream/moonlight-ios).

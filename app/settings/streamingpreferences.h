@@ -167,6 +167,7 @@ public:
     Q_PROPERTY(bool autoAdjustBitrate MEMBER autoAdjustBitrate NOTIFY autoAdjustBitrateChanged)
     Q_PROPERTY(bool enableVsync MEMBER enableVsync NOTIFY enableVsyncChanged)
     Q_PROPERTY(bool enableVrr MEMBER enableVrr NOTIFY enableVrrChanged)
+    Q_PROPERTY(bool vrrSmoothness MEMBER vrrSmoothness NOTIFY vrrSmoothnessChanged)
     Q_PROPERTY(bool gameOptimizations MEMBER gameOptimizations NOTIFY gameOptimizationsChanged)
     Q_PROPERTY(bool playAudioOnHost MEMBER playAudioOnHost NOTIFY playAudioOnHostChanged)
     Q_PROPERTY(bool multiController MEMBER multiController NOTIFY multiControllerChanged)
@@ -219,6 +220,7 @@ public:
     bool autoAdjustBitrate;
     bool enableVsync;
     bool enableVrr;
+    bool vrrSmoothness;
     bool gameOptimizations;
     bool playAudioOnHost;
     bool multiController;
@@ -264,6 +266,7 @@ signals:
     void autoAdjustBitrateChanged();
     void enableVsyncChanged();
     void enableVrrChanged();
+    void vrrSmoothnessChanged();
     void gameOptimizationsChanged();
     void playAudioOnHostChanged();
     void multiControllerChanged();
@@ -309,4 +312,3 @@ private:
 
     QQmlEngine* m_QmlEngine;
 };
-

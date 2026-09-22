@@ -1094,6 +1094,27 @@ Flickable {
                                     :
                                       qsTr("VRR requires V-Sync. Enable V-Sync to change this setting.")
                 }
+
+                CheckBox {
+                    width: parent.width
+                    hoverEnabled: true
+                    text: qsTr("VRR smoothness")
+                    font.pointSize: 12
+                    enabled: settingsPage.preferences.enableVsync &&
+                             settingsPage.preferences.enableVrr
+                    checked: settingsPage.preferences.vrrSmoothness
+                    onCheckedChanged: {
+                        if (!settingsPage.refreshingProfileControls) {
+                            settingsPage.preferences.vrrSmoothness = checked
+                        }
+                    }
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 5000
+                    ToolTip.visible: hovered
+                    ToolTip.text: enabled ? qsTr("Allows VRR to retain one additional frame during short rendering stalls. This can reduce stutter but may add up to one frame of latency.")
+                                              : qsTr("Enable V-Sync and VRR to use the smoothness queue.")
+                }
             }
         }
 

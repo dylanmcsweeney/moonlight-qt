@@ -24,6 +24,7 @@
 #define SER_FULLSCREEN "fullscreen"
 #define SER_VSYNC "vsync"
 #define SER_ENABLEVRR "enablevrr"
+#define SER_VRRSMOOTHNESS "vrrsmoothness"
 #define SER_GAMEOPTS "gameopts"
 #define SER_HOSTAUDIO "hostaudio"
 #define SER_MULTICONT "multicontroller"
@@ -157,6 +158,7 @@ void StreamingPreferences::resetToStock()
     absoluteTouchMode = true;
     framePacing = false;
     enableVrr = false;
+    vrrSmoothness = false;
     connectionWarnings = true;
     configurationWarnings = true;
     richPresence = true;
@@ -381,6 +383,7 @@ void StreamingPreferences::loadStreamSettings(QSettings& settings)
     absoluteTouchMode = settings.value(SER_ABSTOUCHMODE, absoluteTouchMode).toBool();
     framePacing = settings.value(SER_FRAMEPACING, framePacing).toBool();
     enableVrr = settings.value(SER_ENABLEVRR, enableVrr).toBool();
+    vrrSmoothness = settings.value(SER_VRRSMOOTHNESS, vrrSmoothness).toBool();
     connectionWarnings = settings.value(SER_CONNWARNINGS, connectionWarnings).toBool();
     configurationWarnings = settings.value(SER_CONFWARNINGS, configurationWarnings).toBool();
     gamepadMouse = settings.value(SER_GAMEPADMOUSE, gamepadMouse).toBool();
@@ -421,6 +424,7 @@ void StreamingPreferences::saveStreamSettings(QSettings& settings) const
     settings.setValue(SER_AUTOADJUSTBITRATE, autoAdjustBitrate);
     settings.setValue(SER_VSYNC, enableVsync);
     settings.setValue(SER_ENABLEVRR, enableVrr);
+    settings.setValue(SER_VRRSMOOTHNESS, vrrSmoothness);
     settings.setValue(SER_GAMEOPTS, gameOptimizations);
     settings.setValue(SER_HOSTAUDIO, playAudioOnHost);
     settings.setValue(SER_MULTICONT, multiController);
@@ -497,7 +501,7 @@ void StreamingPreferences::copyStreamSettingsFrom(const StreamingPreferences& ot
     COPY_PREF(unlockBitrate); COPY_PREF(autoAdjustBitrate); COPY_PREF(enableVsync);
     COPY_PREF(gameOptimizations); COPY_PREF(playAudioOnHost); COPY_PREF(multiController);
     COPY_PREF(quitAppAfter); COPY_PREF(absoluteMouseMode); COPY_PREF(absoluteTouchMode);
-    COPY_PREF(framePacing); COPY_PREF(enableVrr);
+    COPY_PREF(framePacing); COPY_PREF(enableVrr); COPY_PREF(vrrSmoothness);
     COPY_PREF(connectionWarnings); COPY_PREF(configurationWarnings);
     COPY_PREF(gamepadMouse); COPY_PREF(showPerformanceOverlay); COPY_PREF(packetSize);
     COPY_PREF(swapMouseButtons); COPY_PREF(muteOnFocusLoss); COPY_PREF(backgroundGamepad);
@@ -518,6 +522,7 @@ bool StreamingPreferences::streamSettingsEqual(const StreamingPreferences& other
            SAME_PREF(multiController) && SAME_PREF(quitAppAfter) &&
            SAME_PREF(absoluteMouseMode) && SAME_PREF(absoluteTouchMode) &&
            SAME_PREF(framePacing) && SAME_PREF(enableVrr) &&
+           SAME_PREF(vrrSmoothness) &&
            SAME_PREF(connectionWarnings) &&
            SAME_PREF(configurationWarnings) && SAME_PREF(gamepadMouse) &&
            SAME_PREF(showPerformanceOverlay) && SAME_PREF(packetSize) &&
@@ -564,6 +569,7 @@ void StreamingPreferences::notifyAllChanged()
     emit windowModeChanged();
     emit framePacingChanged();
     emit enableVrrChanged();
+    emit vrrSmoothnessChanged();
     emit connectionWarningsChanged();
     emit configurationWarningsChanged();
     emit gamepadMouseChanged();

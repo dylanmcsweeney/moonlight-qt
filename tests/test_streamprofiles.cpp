@@ -371,6 +371,7 @@ void StreamProfileTests::serializationAndCorruptData()
     preferences->absoluteTouchMode = false;
     preferences->framePacing = true;
     preferences->enableVrr = true;
+    preferences->vrrSmoothness = true;
     preferences->connectionWarnings = false;
     preferences->configurationWarnings = false;
     preferences->gamepadMouse = false;
@@ -395,6 +396,7 @@ void StreamProfileTests::serializationAndCorruptData()
     std::unique_ptr<StreamingPreferences> roundTrip(
         manager->createActiveSettings(host));
     QVERIFY(preferences->streamSettingsEqual(*roundTrip));
+    QVERIFY(roundTrip->vrrSmoothness);
 
     QSettings settings;
     const QString hostKey = QString::fromLatin1(host.toUtf8().toHex());

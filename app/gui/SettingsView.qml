@@ -33,7 +33,8 @@ Flickable {
     }
 
     function requestClose() {
-        if (profileEditor && profileEditor.dirty) {
+        if ((profileEditor && profileEditor.dirty) ||
+                StreamProfileManager.localSettingsDirty) {
             closeAction = "back"
             unsavedChangesDialog.open()
             return true
@@ -42,7 +43,8 @@ Flickable {
     }
 
     function requestApplicationClose() {
-        if (profileEditor && profileEditor.dirty) {
+        if ((profileEditor && profileEditor.dirty) ||
+                StreamProfileManager.localSettingsDirty) {
             closeAction = "quit"
             unsavedChangesDialog.open()
             return true
@@ -67,13 +69,15 @@ Flickable {
             return
         }
 
-        pendingProfileId = profileId
-        closeAction = "switchProfile"
-        if (profileEditor.dirty) {
-            unsavedChangesDialog.open()
-        } else {
-            finishCloseAction()
-        }
+        window.requestSettingsAccess(function() {
+            pendingProfileId = profileId
+            closeAction = "switchProfile"
+            if (profileEditor.dirty) {
+                unsavedChangesDialog.open()
+            } else {
+                finishCloseAction()
+            }
+        })
     }
 
     function requestNewProfile() {
@@ -81,53 +85,102 @@ Flickable {
             return
         }
 
-        pendingProfileId = ""
-        closeAction = "newProfile"
-        if (profileEditor.dirty) {
-            unsavedChangesDialog.open()
-        } else {
-            finishCloseAction()
-        }
+        window.requestSettingsAccess(function() {
+            pendingProfileId = ""
+            closeAction = "newProfile"
+            if (profileEditor.dirty) {
+                unsavedChangesDialog.open()
+            } else {
+                finishCloseAction()
+            }
+        })
     }
 
     function openGlobalSettings() {
-        stackView.pop()
-        window.navigateTo("qrc:/gui/AppSettingsView.qml", AppSettingsView)
+        window.requestSettingsAccess(function() {
+            stackView.pop()
+            window.navigateTo("qrc:/gui/AppSettingsView.qml", AppSettingsView)
+        })
+    }
+
+    function reloadProfileEditor(profileId) {
+        if (!profileEditor) {
+            return
+        }
+        refreshingProfileControls = true
+        if (profileEditor.templateMode) {
+            profileEditor = StreamProfileManager.createTemplateEditor()
+        } else if (profileId) {
+            profileEditor = StreamProfileManager.createEditor(
+                        profileEditor.hostUuid, profileId, false)
+        }
+        refreshProfileControls()
+        refreshingProfileControls = false
     }
 
     function finishCloseAction() {
         if (closeAction === "quit") {
-            Qt.quit()
+            window.requestConfirmedQuit()
         } else if (closeAction === "global") {
             openGlobalSettings()
         } else if (closeAction === "switchProfile") {
-            refreshingProfileControls = true
-            if (profileEditor.switchToProfile(pendingProfileId)) {
-                refreshProfileControls()
-            }
-            refreshingProfileControls = false
-            pendingProfileId = ""
-            closeAction = "back"
-            contentY = 0
+            window.requestSettingsAccess(function() {
+                refreshingProfileControls = true
+                if (profileEditor.switchToProfile(pendingProfileId)) {
+                    refreshProfileControls()
+                }
+                refreshingProfileControls = false
+                pendingProfileId = ""
+                closeAction = "back"
+                contentY = 0
+            })
         } else if (closeAction === "newProfile") {
-            refreshingProfileControls = true
-            if (profileEditor.beginNewProfile()) {
-                refreshProfileControls()
-            }
-            refreshingProfileControls = false
-            closeAction = "back"
-            contentY = 0
+            window.requestSettingsAccess(function() {
+                refreshingProfileControls = true
+                if (profileEditor.beginNewProfile()) {
+                    refreshProfileControls()
+                }
+                refreshingProfileControls = false
+                closeAction = "back"
+                contentY = 0
+            })
         } else {
             stackView.pop()
         }
     }
 
     function saveAndClose() {
-        if (profileEditor.save()) {
-            finishCloseAction()
+        if (profileEditor && profileEditor.dirty) {
+            window.requestSettingsAccess(function() {
+                if (profileEditor.save()) {
+                    finishCloseAction()
+                } else {
+                    showProfileSaveError()
+                }
+            })
+        } else if (StreamProfileManager.localSettingsDirty) {
+            window.requestSettingsAccess(function() {
+                if (StreamProfileManager.saveLocalSnapshot()) {
+                    finishCloseAction()
+                } else {
+                    window.showSettingsError(StreamProfileManager.lastError)
+                }
+            })
         } else {
-            invalidNameDialog.open()
+            finishCloseAction()
         }
+    }
+
+    function showProfileSaveError() {
+        if (profileEditor && !profileEditor.name.trim()) {
+            invalidNameDialog.open()
+            return
+        }
+        var reason = profileEditor ? profileEditor.lastError :
+                                     StreamProfileManager.lastError
+        profileSaveErrorDialog.text = reason ? reason :
+                qsTr("Moonlight could not save the local settings. Check for a newer shared settings change and try again.")
+        profileSaveErrorDialog.open()
     }
 
     function preferredWindowWidth() {
@@ -238,8 +291,10 @@ Flickable {
                               qsTr("Active profile: %1   …")
                                   .arg(profileEditor.name)
                     onClicked: {
-                        profilePickerDialog.refresh()
-                        profilePickerDialog.open()
+                        window.requestSettingsAccess(function() {
+                            profilePickerDialog.refresh()
+                            profilePickerDialog.open()
+                        })
                     }
                 }
 
@@ -260,36 +315,50 @@ Flickable {
                         text: qsTr("Save")
                         enabled: profileEditor.dirty
                         onClicked: {
-                            if (!profileEditor.save()) {
-                                invalidNameDialog.open()
-                            }
+                            window.requestSettingsAccess(function() {
+                                if (!profileEditor.save()) {
+                                    settingsPage.showProfileSaveError()
+                                }
+                            })
                         }
                     }
                     Button {
                         text: qsTr("Copy")
                         visible: !profileEditor.templateMode
                         enabled: !profileEditor.newProfile && !profileEditor.dirty
-                        onClicked: profileEditor.copy()
+                        onClicked: window.requestSettingsAccess(function() {
+                            if (!profileEditor.copy()) {
+                                window.showSettingsError(profileEditor.lastError)
+                            }
+                        })
                     }
                     Button {
                         text: qsTr("Delete")
                         visible: !profileEditor.templateMode
                         enabled: profileEditor.canDelete
-                        onClicked: deleteProfileDialog.open()
+                        onClicked: window.requestSettingsAccess(function() {
+                            deleteProfileDialog.open()
+                        })
                     }
                     Button {
                         text: qsTr("Set as Default")
                         visible: !profileEditor.templateMode
                         enabled: !profileEditor.newProfile && !profileEditor.dirty
-                        onClicked: profileEditor.setAsDefault()
+                        onClicked: window.requestSettingsAccess(function() {
+                            if (!profileEditor.setAsDefault()) {
+                                window.showSettingsError(profileEditor.lastError)
+                            }
+                        })
                     }
                     Button {
                         text: qsTr("Reset to Stock")
                         onClicked: {
-                            settingsPage.refreshingProfileControls = true
-                            profileEditor.resetToStock()
-                            settingsPage.refreshProfileControls()
-                            settingsPage.refreshingProfileControls = false
+                            window.requestSettingsAccess(function() {
+                                settingsPage.refreshingProfileControls = true
+                                profileEditor.resetToStock()
+                                settingsPage.refreshProfileControls()
+                                settingsPage.refreshingProfileControls = false
+                            })
                         }
                     }
                 }
@@ -1046,7 +1115,7 @@ Flickable {
                     text: qsTr("Frame pacing")
                     font.pointSize:  12
                     enabled: settingsPage.preferences.enableVsync
-                    checked: settingsPage.preferences.enableVsync && settingsPage.preferences.framePacing
+                    checked: settingsPage.preferences.framePacing
                     onCheckedChanged: {
                         if (!settingsPage.refreshingProfileControls) {
                             settingsPage.preferences.framePacing = checked
@@ -1079,8 +1148,7 @@ Flickable {
                     text: qsTr("Enable VRR")
                     font.pointSize: 12
                     enabled: settingsPage.preferences.enableVsync
-                    checked: settingsPage.preferences.enableVsync &&
-                             settingsPage.preferences.enableVrr
+                    checked: settingsPage.preferences.enableVrr
                     onCheckedChanged: {
                         if (!settingsPage.refreshingProfileControls) {
                             settingsPage.preferences.enableVrr = checked
@@ -1373,6 +1441,8 @@ Flickable {
                         enabled: SystemProperties.hasDesktopEnvironment
                         checked: settingsPage.preferences.captureSysKeysMode !== StreamingPreferences.CSK_OFF || !SystemProperties.hasDesktopEnvironment
 
+                        onClicked: captureSysKeysModeComboBox.updatePref()
+
                         ToolTip.delay: 1000
                         ToolTip.timeout: 10000
                         ToolTip.visible: hovered
@@ -1419,7 +1489,7 @@ Flickable {
                         }
 
                         function updatePref() {
-                            if (!enabled) {
+                            if (!captureSysKeysCheck.checked) {
                                 settingsPage.preferences.captureSysKeysMode = StreamingPreferences.CSK_OFF
                             }
                             else {
@@ -1430,13 +1500,6 @@ Flickable {
                         // ::onActivated must be used, as it only listens for when the index is changed by a human
                         onActivated: {
                             updatePref()
-                        }
-
-                        // This handles transition of the checkbox state
-                        onEnabledChanged: {
-                            if (!settingsPage.refreshingProfileControls) {
-                                updatePref()
-                            }
                         }
                     }
                 }
@@ -1702,11 +1765,7 @@ Flickable {
 
                     enabled: SystemProperties.supportsHdr
                     checked: enabled && settingsPage.preferences.enableHdr
-                    onCheckedChanged: {
-                        if (!settingsPage.refreshingProfileControls) {
-                            settingsPage.preferences.enableHdr = checked
-                        }
-                    }
+                    onClicked: settingsPage.preferences.enableHdr = checked
 
                     // Updating settingsPage.preferences.videoCodecConfig is handled above
 
@@ -1811,10 +1870,12 @@ Flickable {
         }
 
         onOpened: {
-            if (settingsProfileButtons.count > 0) {
-                settingsProfileButtons.itemAt(0)
-                    .forceActiveFocus(Qt.TabFocus)
-            }
+            window.requestSettingsAccess(function() {
+                if (settingsProfileButtons.count > 0) {
+                    settingsProfileButtons.itemAt(0)
+                        .forceActiveFocus(Qt.TabFocus)
+                }
+            })
         }
 
         ColumnLayout {
@@ -1829,8 +1890,10 @@ Flickable {
                     text: (modelData.active ? "● " : "") + modelData.name
                     highlighted: modelData.active
                     onClicked: {
-                        profilePickerDialog.close()
-                        settingsPage.requestProfileSwitch(modelData.profileId)
+                        window.requestSettingsAccess(function() {
+                            profilePickerDialog.close()
+                            settingsPage.requestProfileSwitch(modelData.profileId)
+                        })
                     }
                 }
             }
@@ -1840,8 +1903,10 @@ Flickable {
                 opacity: 0.55
                 text: qsTr("New Profile")
                 onClicked: {
-                    profilePickerDialog.close()
-                    settingsPage.requestNewProfile()
+                    window.requestSettingsAccess(function() {
+                        profilePickerDialog.close()
+                        settingsPage.requestNewProfile()
+                    })
                 }
             }
         }
@@ -1853,7 +1918,7 @@ Flickable {
         modal: true
 
         Label {
-            text: qsTr("Save changes to this streaming profile?")
+            text: qsTr("Save this instance's local settings before continuing?")
             wrapMode: Text.Wrap
         }
 
@@ -1870,6 +1935,13 @@ Flickable {
                 text: qsTr("Discard")
                 DialogButtonBox.buttonRole: DialogButtonBox.DestructiveRole
                 onClicked: {
+                    if (StreamProfileManager.localSettingsDirty &&
+                            !StreamProfileManager.discardLocalChanges()) {
+                        profileSaveErrorDialog.text =
+                                qsTr("Moonlight could not discard this instance's local settings.")
+                        profileSaveErrorDialog.open()
+                        return
+                    }
                     profileEditor.discardChanges()
                     unsavedChangesDialog.close()
                     settingsPage.finishCloseAction()
@@ -1888,15 +1960,24 @@ Flickable {
         text: qsTr("Delete profile '%1'?").arg(profileEditor.name)
         standardButtons: Dialog.Yes | Dialog.No
         onAccepted: {
-            if (profileEditor.remove()) {
-                stackView.pop()
-            }
+            window.requestSettingsAccess(function() {
+                if (profileEditor.remove()) {
+                    stackView.pop()
+                } else {
+                    window.showSettingsError(profileEditor.lastError)
+                }
+            })
         }
     }
 
     NavigableMessageDialog {
         id: invalidNameDialog
         text: qsTr("Profile names cannot be empty.")
+        standardButtons: Dialog.Ok
+    }
+
+    NavigableMessageDialog {
+        id: profileSaveErrorDialog
         standardButtons: Dialog.Ok
     }
 }

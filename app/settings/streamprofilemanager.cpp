@@ -1,11 +1,28 @@
 #include "streamprofilemanager.h"
 
 #include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QLockFile>
 #include <QJSEngine>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QQmlEngine>
 #include <QRegularExpression>
+#include <QStandardPaths>
+#include <QSet>
 #include <QSettings>
+#include <QDateTime>
+#include <QSaveFile>
 #include <QUuid>
+#ifdef Q_OS_WIN
+#include <windows.h>
+#else
+#include <cerrno>
+#include <signal.h>
+#endif
 
 namespace {
 
@@ -16,6 +33,81 @@ const char* const PROFILE_ORDER = "profileOrder";
 const char* const ACTIVE_PROFILE = "activeProfile";
 const char* const NEXT_PROFILE_NUMBER = "nextProfileNumber";
 const char* const PROFILE_NAME = "name";
+const char* const COORD_GROUP = "settingsCoordination";
+const char* const COORD_REVISION = "revision";
+const char* const COORD_INSTANCE = "changedBy";
+const char* const COORD_INSTANCE_NUMBER = "instanceNumber";
+const char* const COORD_CHANGED_AT = "changedAt";
+const QStringList APP_PREFERENCE_KEYS = {
+    QStringLiteral("mdns"), QStringLiteral("detectnetblocking"),
+    QStringLiteral("richpresence"), QStringLiteral("uidisplaymode"),
+    QStringLiteral("uiframepacingmode"), QStringLiteral("uigraphicsbackend"),
+    QStringLiteral("uid3d11swapchainmode"), QStringLiteral("language"),
+    QStringLiteral("uiswapfacebuttons"), QStringLiteral("showpcprofilecontrols")
+};
+
+qulonglong readRevision(QSettings& settings)
+{
+    return settings.value(QStringLiteral("settingsCoordination/revision"), 0).toULongLong();
+}
+
+QStringList profileHostUuids(QSettings& settings)
+{
+    const QString prefix = QStringLiteral("streamProfiles/hosts/");
+    QStringList result;
+    for (const QString& key : settings.allKeys()) {
+        if (!key.startsWith(prefix) || !key.endsWith(QStringLiteral("/profileOrder"))) {
+            continue;
+        }
+        const QString encoded = key.mid(prefix.size(), key.size() - prefix.size() -
+                                         QStringLiteral("/profileOrder").size());
+        const QString uuid = QString::fromUtf8(QByteArray::fromHex(encoded.toLatin1()));
+        if (!uuid.isEmpty() && !result.contains(uuid)) result.append(uuid);
+    }
+    return result;
+}
+
+void copyManagedSettings(QSettings& source, QSettings& destination)
+{
+    const QString profilePrefix = QStringLiteral("streamProfiles/");
+    QStringList destinationProfileKeys;
+    for (const QString& key : destination.allKeys()) {
+        if (key.startsWith(profilePrefix)) {
+            destinationProfileKeys.append(key);
+        }
+    }
+    for (const QString& key : std::as_const(destinationProfileKeys)) {
+        destination.remove(key);
+    }
+    for (const QString& key : source.allKeys()) {
+        if (key.startsWith(profilePrefix)) {
+            destination.setValue(key, source.value(key));
+        }
+    }
+    for (const QString& key : APP_PREFERENCE_KEYS) {
+        if (source.contains(key)) {
+            destination.setValue(key, source.value(key));
+        }
+        else {
+            destination.remove(key);
+        }
+    }
+}
+
+bool isProcessRunning(qint64 pid)
+{
+    if (pid <= 0) return false;
+#ifdef Q_OS_WIN
+    HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, DWORD(pid));
+    if (!process) return GetLastError() == ERROR_ACCESS_DENIED;
+    const DWORD waitResult = WaitForSingleObject(process, 0);
+    CloseHandle(process);
+    return waitResult == WAIT_TIMEOUT;
+#else
+    if (::kill(pid_t(pid), 0) == 0) return true;
+    return errno == EPERM;
+#endif
+}
 
 }
 
@@ -29,7 +121,454 @@ StreamProfileManager* StreamProfileManager::get()
 StreamProfileManager::StreamProfileManager(QObject* parent)
     : QObject(parent)
 {
-    initializeTemplate();
+    m_InstanceId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    m_SnapshotPath = m_SnapshotDirectory.filePath(QStringLiteral("settings.ini"));
+    if (initializeSnapshot()) {
+        registerInstance();
+        initializeTemplate();
+    }
+    else {
+        qCritical() << "Settings coordination could not create a safe shared-settings snapshot";
+    }
+}
+
+StreamProfileManager::~StreamProfileManager()
+{
+    unregisterInstance();
+}
+
+QString StreamProfileManager::sharedStateDirectory() const
+{
+    QSettings shared;
+    if (shared.format() == QSettings::IniFormat) {
+        const QString filePath = shared.fileName();
+        if (!filePath.isEmpty()) {
+            const QString directory = QFileInfo(filePath).absolutePath();
+            QDir().mkpath(directory);
+            return directory;
+        }
+    }
+    QString path = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    if (path.isEmpty()) {
+        path = QDir::homePath() + QStringLiteral("/.config/Moonlight");
+    }
+    QDir().mkpath(path);
+    return path;
+}
+
+QString StreamProfileManager::lockFilePath() const
+{
+    return QDir(sharedStateDirectory()).filePath(QStringLiteral("moonlight-settings.lock"));
+}
+
+bool StreamProfileManager::initializeSnapshot()
+{
+    if (!m_SnapshotDirectory.isValid()) return false;
+    QLockFile lock(lockFilePath());
+    lock.setStaleLockTime(30000);
+    if (!lock.tryLock(5000)) {
+        qWarning() << "Unable to lock settings while creating instance snapshot";
+        return false;
+    }
+    QSettings shared;
+    shared.sync();
+    if (shared.status() != QSettings::NoError) {
+        qWarning() << "Unable to read shared settings for instance snapshot" << shared.status();
+        return false;
+    }
+    QSettings local(m_SnapshotPath, QSettings::IniFormat);
+    for (const QString& key : shared.allKeys()) {
+        local.setValue(key, shared.value(key));
+    }
+    m_SnapshotRevision = readRevision(shared);
+    m_AcknowledgedRevision = m_SnapshotRevision;
+    m_LastObservedRevision = m_SnapshotRevision;
+    local.setValue(QStringLiteral("settingsCoordination/revision"), m_SnapshotRevision);
+    local.sync();
+    if (local.status() != QSettings::NoError) return false;
+    m_SnapshotReady = true;
+    return true;
+}
+
+bool StreamProfileManager::loadSharedIntoSnapshot(qulonglong* revision)
+{
+    if (!m_SnapshotReady) return false;
+    QSettings shared;
+    shared.sync();
+    if (shared.status() != QSettings::NoError) {
+        return false;
+    }
+    QSettings local(m_SnapshotPath, QSettings::IniFormat);
+    // The snapshot is a full copy so unmanaged settings remain available to
+    // legacy readers, but only the managed groups are ever published.
+    local.clear();
+    for (const QString& key : shared.allKeys()) {
+        local.setValue(key, shared.value(key));
+    }
+    const qulonglong currentRevision = readRevision(shared);
+    local.sync();
+    if (revision) *revision = currentRevision;
+    return local.status() == QSettings::NoError;
+}
+
+void StreamProfileManager::registerInstance()
+{
+    QLockFile lock(lockFilePath());
+    lock.setStaleLockTime(30000);
+    if (!lock.tryLock(5000)) return;
+    QDir dir(sharedStateDirectory());
+    const QStringList files = dir.entryList(QStringList() << "instance-*.json", QDir::Files);
+    QSet<int> used;
+    for (const QString& file : files) {
+        QFile record(dir.filePath(file));
+        if (!record.open(QIODevice::ReadOnly)) continue;
+        const QJsonObject item = QJsonDocument::fromJson(record.readAll()).object();
+        const qint64 pid = item.value(QStringLiteral("pid")).toVariant().toLongLong();
+        if (!isProcessRunning(pid)) {
+            record.close();
+            QFile::remove(dir.filePath(file));
+            continue;
+        }
+        used.insert(item.value(QStringLiteral("number")).toInt());
+    }
+    while (used.contains(m_InstanceNumber)) ++m_InstanceNumber;
+    writeInstanceStatus();
+}
+
+void StreamProfileManager::unregisterInstance()
+{
+    if (m_InstanceId.isEmpty()) return;
+    QLockFile lock(lockFilePath());
+    lock.setStaleLockTime(30000);
+    if (!lock.tryLock(5000)) return;
+    QFile::remove(QDir(sharedStateDirectory()).filePath(
+                      QStringLiteral("instance-%1.json").arg(m_InstanceId)));
+}
+
+void StreamProfileManager::writeInstanceStatus()
+{
+    if (m_InstanceId.isEmpty()) return;
+    QJsonObject item;
+    item.insert(QStringLiteral("id"), m_InstanceId);
+    item.insert(QStringLiteral("pid"), QCoreApplication::applicationPid());
+    item.insert(QStringLiteral("number"), m_InstanceNumber);
+    item.insert(QStringLiteral("snapshotSourceRevision"),
+                static_cast<qint64>(m_SnapshotRevision));
+    item.insert(QStringLiteral("acknowledgedRevision"),
+                static_cast<qint64>(m_AcknowledgedRevision));
+    item.insert(QStringLiteral("localDirty"), m_LocalSettingsDirty);
+    item.insert(QStringLiteral("updatedAt"),
+                QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    QSaveFile record(QDir(sharedStateDirectory()).filePath(
+                         QStringLiteral("instance-%1.json").arg(m_InstanceId)));
+    if (record.open(QIODevice::WriteOnly)) {
+        record.write(QJsonDocument(item).toJson(QJsonDocument::Compact));
+        record.commit();
+    }
+}
+
+void StreamProfileManager::updateInstanceStatus()
+{
+    QLockFile lock(lockFilePath());
+    lock.setStaleLockTime(30000);
+    if (!lock.tryLock(1000)) return;
+    writeInstanceStatus();
+}
+
+bool StreamProfileManager::publishSnapshot(bool force)
+{
+    bool lockHeld = false;
+    auto fail = [this, &lockHeld](const QString& message) {
+        if (lockHeld) writeInstanceStatus();
+        if (m_LastError != message) {
+            m_LastError = message;
+            emit lastErrorChanged();
+        }
+        return false;
+    };
+    if (!m_SnapshotReady) return fail(tr("The local settings snapshot is unavailable."));
+    QLockFile lock(lockFilePath());
+    lock.setStaleLockTime(30000);
+    if (!lock.tryLock(5000)) return fail(tr("Could not lock shared settings."));
+    lockHeld = true;
+    QSettings shared;
+    shared.sync();
+    if (shared.status() != QSettings::NoError) return fail(tr("Could not read shared settings."));
+    const qulonglong currentRevision = readRevision(shared);
+    if (!force && currentRevision != m_AcknowledgedRevision) {
+        return fail(tr("Another Moonlight instance changed settings. Check for external changes before saving."));
+    }
+    if (force && currentRevision != m_LastObservedRevision) {
+        m_LastObservedRevision = currentRevision;
+        return fail(tr("Shared settings changed again. Check for external changes before overriding."));
+    }
+    QSettings local(m_SnapshotPath, QSettings::IniFormat);
+    local.sync();
+    if (local.status() != QSettings::NoError) return fail(tr("Could not read the local settings snapshot."));
+    copyManagedSettings(local, shared);
+    const qulonglong nextRevision = currentRevision + 1;
+    shared.setValue(QStringLiteral("settingsCoordination/revision"), nextRevision);
+    shared.setValue(QStringLiteral("settingsCoordination/changedBy"), m_InstanceId);
+    shared.setValue(QStringLiteral("settingsCoordination/instanceNumber"), m_InstanceNumber);
+    shared.setValue(QStringLiteral("settingsCoordination/changedAt"),
+                    QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    shared.sync();
+    if (shared.status() != QSettings::NoError) return fail(tr("Could not write shared settings."));
+    local.setValue(QStringLiteral("settingsCoordination/revision"), nextRevision);
+    local.sync();
+    if (local.status() != QSettings::NoError) {
+        m_LocalSettingsDirty = true;
+        return fail(tr("Shared settings were written, but the local snapshot could not be updated."));
+    }
+    m_SnapshotRevision = m_AcknowledgedRevision = nextRevision;
+    m_LastObservedRevision = nextRevision;
+    const bool dirtyWas = m_LocalSettingsDirty;
+    m_LocalSettingsDirty = false;
+    writeInstanceStatus();
+    const bool errorWas = !m_LastError.isEmpty();
+    if (errorWas) {
+        m_LastError.clear();
+    }
+    lock.unlock();
+    lockHeld = false;
+    if (dirtyWas) emit localSettingsDirtyChanged();
+    if (errorWas) emit lastErrorChanged();
+    emit sharedRevisionChanged();
+    return true;
+}
+
+QVariantMap StreamProfileManager::checkForExternalChanges()
+{
+    QLockFile lock(lockFilePath());
+    lock.setStaleLockTime(30000);
+    QVariantMap result;
+    if (!m_SnapshotReady) {
+        result.insert(QStringLiteral("error"), QStringLiteral("Settings snapshot is unavailable"));
+        return result;
+    }
+    if (!lock.tryLock(5000)) {
+        result.insert(QStringLiteral("error"), QStringLiteral("Unable to lock shared settings"));
+        return result;
+    }
+    QSettings shared;
+    shared.sync();
+    if (shared.status() != QSettings::NoError) {
+        result.insert(QStringLiteral("error"), QStringLiteral("Unable to read shared settings"));
+        return result;
+    }
+    const qulonglong revision = readRevision(shared);
+    m_LastObservedRevision = revision;
+    result.insert(QStringLiteral("revision"), QVariant::fromValue(revision));
+    result.insert(QStringLiteral("changed"), revision != m_AcknowledgedRevision);
+    result.insert(QStringLiteral("changedBy"), shared.value(QStringLiteral("settingsCoordination/changedBy")).toString());
+    result.insert(QStringLiteral("changedAt"), shared.value(QStringLiteral("settingsCoordination/changedAt")).toString());
+    result.insert(QStringLiteral("instanceNumber"), shared.value(QStringLiteral("settingsCoordination/instanceNumber")).toInt());
+    result.insert(QStringLiteral("localSettingsDirty"), m_LocalSettingsDirty);
+    return result;
+}
+
+bool StreamProfileManager::acknowledgeExternalChanges()
+{
+    if (!m_SnapshotReady) {
+        setLastError(tr("The local settings snapshot is unavailable."));
+        return false;
+    }
+    QLockFile lock(lockFilePath());
+    lock.setStaleLockTime(30000);
+    if (!lock.tryLock(5000)) {
+        setLastError(tr("Could not lock shared settings."));
+        return false;
+    }
+    QSettings shared;
+    shared.sync();
+    if (shared.status() != QSettings::NoError) {
+        lock.unlock();
+        setLastError(tr("Could not read shared settings."));
+        return false;
+    }
+    const qulonglong currentRevision = readRevision(shared);
+    if (currentRevision != m_LastObservedRevision) {
+        lock.unlock();
+        setLastError(tr("Shared settings changed again. Check for external changes before continuing."));
+        return false;
+    }
+    m_AcknowledgedRevision = currentRevision;
+    m_LastObservedRevision = m_AcknowledgedRevision;
+    const bool dirtyChanged = !m_LocalSettingsDirty;
+    if (dirtyChanged) {
+        m_LocalSettingsDirty = true;
+    }
+    writeInstanceStatus();
+    lock.unlock();
+    if (dirtyChanged) emit localSettingsDirtyChanged();
+    if (!m_LastError.isEmpty()) {
+        m_LastError.clear();
+        emit lastErrorChanged();
+    }
+    emit sharedRevisionChanged();
+    return true;
+}
+
+QVariantMap StreamProfileManager::reloadSnapshot(const QString& hostUuid,
+                                                 bool discardLocalChanges)
+{
+    QVariantMap result;
+    if (m_LocalSettingsDirty && !discardLocalChanges) {
+        result.insert(QStringLiteral("error"), tr("Save or discard local settings before reloading."));
+        return result;
+    }
+    QString oldActiveId;
+    QString oldActiveName;
+    StreamingPreferences oldActiveSettings;
+    StreamingPreferences oldTemplateSettings;
+    loadTemplate(oldTemplateSettings);
+    QSettings oldSnapshot(m_SnapshotPath, QSettings::IniFormat);
+    QStringList affectedHosts = profileHostUuids(oldSnapshot);
+    if (!hostUuid.isEmpty()) {
+        QSettings before(m_SnapshotPath, QSettings::IniFormat);
+        before.beginGroup(ROOT_GROUP);
+        before.beginGroup(HOSTS_GROUP);
+        before.beginGroup(hostKey(hostUuid));
+        oldActiveId = before.value(ACTIVE_PROFILE).toString();
+        if (!oldActiveId.isEmpty()) {
+            loadProfile(hostUuid, oldActiveId, oldActiveName, oldActiveSettings);
+        }
+    }
+    qulonglong revision = 0;
+    QLockFile lock(lockFilePath());
+    lock.setStaleLockTime(30000);
+    if (!lock.tryLock(5000)) {
+        result.insert(QStringLiteral("error"), QStringLiteral("Unable to lock shared settings"));
+        return result;
+    }
+    if (!loadSharedIntoSnapshot(&revision)) {
+        result.insert(QStringLiteral("error"), QStringLiteral("Unable to reload shared settings"));
+        return result;
+    }
+    m_SnapshotRevision = m_AcknowledgedRevision = revision;
+    m_LastObservedRevision = revision;
+    m_LocalSettingsDirty = false;
+    writeInstanceStatus();
+    QSettings newSnapshot(m_SnapshotPath, QSettings::IniFormat);
+    for (const QString& uuid : profileHostUuids(newSnapshot)) {
+        if (!affectedHosts.contains(uuid)) affectedHosts.append(uuid);
+    }
+    StreamingPreferences newTemplateSettings;
+    loadTemplate(newTemplateSettings);
+    const bool templateSettingsChanged =
+        !oldTemplateSettings.streamSettingsEqual(newTemplateSettings);
+    QString newActiveId;
+    QString newActiveName;
+    StreamingPreferences newActiveSettings;
+    if (!hostUuid.isEmpty()) {
+        QSettings after(m_SnapshotPath, QSettings::IniFormat);
+        after.beginGroup(ROOT_GROUP);
+        after.beginGroup(HOSTS_GROUP);
+        after.beginGroup(hostKey(hostUuid));
+        newActiveId = after.value(ACTIVE_PROFILE).toString();
+        if (!newActiveId.isEmpty()) {
+            loadProfile(hostUuid, newActiveId, newActiveName, newActiveSettings);
+        }
+    }
+    const bool activeProfileChanged = oldActiveId != newActiveId ||
+                                      oldActiveName != newActiveName;
+    const bool activeSettingsChanged = activeProfileChanged ||
+                                       (!oldActiveId.isEmpty() &&
+                                        !oldActiveSettings.streamSettingsEqual(newActiveSettings));
+    result.insert(QStringLiteral("revision"), QVariant::fromValue(revision));
+    result.insert(QStringLiteral("oldActiveProfileId"), oldActiveId);
+    result.insert(QStringLiteral("activeProfileId"), newActiveId);
+    result.insert(QStringLiteral("activeSettingsChanged"), activeSettingsChanged);
+    result.insert(QStringLiteral("activeProfileChanged"), activeProfileChanged);
+    result.insert(QStringLiteral("templateSettingsChanged"), templateSettingsChanged);
+    result.insert(QStringLiteral("error"), QString());
+    lock.unlock();
+    StreamingPreferences* appPreferences = StreamingPreferences::get();
+    if (loadApplicationPreferences(*appPreferences)) {
+        appPreferences->notifyAllChanged();
+    }
+    for (const QString& uuid : std::as_const(affectedHosts)) {
+        emit profilesChanged(uuid);
+    }
+    emit sharedRevisionChanged();
+    emit localSettingsDirtyChanged();
+    return result;
+}
+
+bool StreamProfileManager::discardLocalChanges()
+{
+    const QVariantMap result = reloadSnapshot(QString(), true);
+    return result.value(QStringLiteral("error")).toString().isEmpty();
+}
+
+bool StreamProfileManager::saveLocalSnapshot()
+{
+    if (!m_SnapshotReady) return false;
+    if (!m_LocalSettingsDirty) return true;
+    return publishSnapshot(false);
+}
+
+bool StreamProfileManager::overrideExternalChanges()
+{
+    if (!m_SnapshotReady) return false;
+    QMutexLocker locker(&m_Mutex);
+    QSettings settings(m_SnapshotPath, QSettings::IniFormat);
+    StreamingPreferences* appPreferences = StreamingPreferences::get();
+    appPreferences->saveApplicationSettings(settings);
+    settings.sync();
+    if (settings.status() != QSettings::NoError) {
+        setLastError(tr("Could not stage application settings for override."));
+        return false;
+    }
+    if (!m_LocalSettingsDirty) {
+        m_LocalSettingsDirty = true;
+        emit localSettingsDirtyChanged();
+    }
+    return publishSnapshot(true);
+}
+
+bool StreamProfileManager::saveApplicationPreferences(const StreamingPreferences& preferences)
+{
+    if (!m_SnapshotReady) return false;
+    QMutexLocker locker(&m_Mutex);
+    QSettings settings(m_SnapshotPath, QSettings::IniFormat);
+    QVariantMap oldValues;
+    for (const QString& key : APP_PREFERENCE_KEYS) {
+        oldValues.insert(key, settings.value(key));
+    }
+    preferences.saveApplicationSettings(settings);
+    settings.sync();
+    if (settings.status() != QSettings::NoError) return false;
+    bool changed = false;
+    for (const QString& key : APP_PREFERENCE_KEYS) {
+        changed |= oldValues.value(key) != settings.value(key);
+    }
+    if (!changed) {
+        return m_LocalSettingsDirty ? publishSnapshot() : true;
+    }
+    if (!m_LocalSettingsDirty) {
+        m_LocalSettingsDirty = true;
+        emit localSettingsDirtyChanged();
+    }
+    return publishSnapshot();
+}
+
+bool StreamProfileManager::loadApplicationPreferences(StreamingPreferences& preferences)
+{
+    if (!m_SnapshotReady) return false;
+    QSettings settings(m_SnapshotPath, QSettings::IniFormat);
+    settings.sync();
+    if (settings.status() != QSettings::NoError) return false;
+    preferences.resetToStock();
+    preferences.loadApplicationSettings(settings);
+    return true;
+}
+
+void StreamProfileManager::setLastError(const QString& message)
+{
+    if (m_LastError == message) return;
+    m_LastError = message;
+    emit lastErrorChanged();
 }
 
 QString StreamProfileManager::hostKey(const QString& hostUuid) const
@@ -45,20 +584,23 @@ QString StreamProfileManager::createProfileId() const
 void StreamProfileManager::initializeTemplate()
 {
     QMutexLocker locker(&m_Mutex);
-    QSettings settings;
+    QSettings settings(m_SnapshotPath, QSettings::IniFormat);
     settings.beginGroup(ROOT_GROUP);
     if (!settings.childGroups().contains(TEMPLATE_GROUP)) {
         settings.beginGroup(TEMPLATE_GROUP);
         StreamingPreferences stock;
         stock.saveStreamSettings(settings);
         settings.endGroup();
+        settings.sync();
+        m_LocalSettingsDirty = true;
+        publishSnapshot();
     }
     settings.endGroup();
 }
 
 void StreamProfileManager::loadTemplate(StreamingPreferences& preferences)
 {
-    QSettings settings;
+    QSettings settings(m_SnapshotPath, QSettings::IniFormat);
     settings.beginGroup(ROOT_GROUP);
     settings.beginGroup(TEMPLATE_GROUP);
     preferences.resetToStock();
@@ -69,7 +611,7 @@ void StreamProfileManager::loadTemplate(StreamingPreferences& preferences)
 
 void StreamProfileManager::saveTemplate(const StreamingPreferences& preferences)
 {
-    QSettings settings;
+    QSettings settings(m_SnapshotPath, QSettings::IniFormat);
     settings.beginGroup(ROOT_GROUP);
     settings.remove(TEMPLATE_GROUP);
     settings.beginGroup(TEMPLATE_GROUP);
@@ -96,12 +638,15 @@ void StreamProfileManager::ensureHost(const QString& hostUuid, bool useStockDefa
     }
 
     QMutexLocker locker(&m_Mutex);
-    QSettings settings;
+    QSettings settings(m_SnapshotPath, QSettings::IniFormat);
     settings.beginGroup(ROOT_GROUP);
     settings.beginGroup(HOSTS_GROUP);
     settings.beginGroup(hostKey(hostUuid));
 
     QStringList order = settings.value(PROFILE_ORDER).toStringList();
+    const QStringList originalOrder = order;
+    const QString originalActiveProfile = settings.value(ACTIVE_PROFILE).toString();
+    const int originalNextNumber = settings.value(NEXT_PROFILE_NUMBER, 1).toInt();
     settings.beginGroup("profiles");
     const QStringList storedProfiles = settings.childGroups();
     settings.endGroup();
@@ -157,6 +702,14 @@ void StreamProfileManager::ensureHost(const QString& hostUuid, bool useStockDefa
         settings.setValue(NEXT_PROFILE_NUMBER, nextNumber);
     }
     settings.sync();
+    const bool changed = originalOrder != order ||
+                         originalActiveProfile != settings.value(ACTIVE_PROFILE).toString() ||
+                         originalNextNumber != settings.value(NEXT_PROFILE_NUMBER, 1).toInt();
+    if (changed) {
+        m_LocalSettingsDirty = true;
+        emit localSettingsDirtyChanged();
+        publishSnapshot();
+    }
 }
 
 QVariantList StreamProfileManager::profiles(const QString& hostUuid)
@@ -164,7 +717,7 @@ QVariantList StreamProfileManager::profiles(const QString& hostUuid)
     ensureHost(hostUuid);
 
     QMutexLocker locker(&m_Mutex);
-    QSettings settings;
+    QSettings settings(m_SnapshotPath, QSettings::IniFormat);
     settings.beginGroup(ROOT_GROUP);
     settings.beginGroup(HOSTS_GROUP);
     settings.beginGroup(hostKey(hostUuid));
@@ -190,7 +743,7 @@ QString StreamProfileManager::activeProfileId(const QString& hostUuid)
 {
     ensureHost(hostUuid);
     QMutexLocker locker(&m_Mutex);
-    QSettings settings;
+    QSettings settings(m_SnapshotPath, QSettings::IniFormat);
     settings.beginGroup(ROOT_GROUP);
     settings.beginGroup(HOSTS_GROUP);
     settings.beginGroup(hostKey(hostUuid));
@@ -211,7 +764,7 @@ bool StreamProfileManager::activateProfile(const QString& hostUuid, const QStrin
 {
     ensureHost(hostUuid);
     QMutexLocker locker(&m_Mutex);
-    QSettings settings;
+    QSettings settings(m_SnapshotPath, QSettings::IniFormat);
     settings.beginGroup(ROOT_GROUP);
     settings.beginGroup(HOSTS_GROUP);
     settings.beginGroup(hostKey(hostUuid));
@@ -219,8 +772,23 @@ bool StreamProfileManager::activateProfile(const QString& hostUuid, const QStrin
     if (!order.contains(profileId)) {
         return false;
     }
+    const QString oldActiveProfile = settings.value(ACTIVE_PROFILE).toString();
+    const bool wasLocallyDirty = m_LocalSettingsDirty;
     settings.setValue(ACTIVE_PROFILE, profileId);
     settings.sync();
+    m_LocalSettingsDirty = true;
+    emit localSettingsDirtyChanged();
+    if (!publishSnapshot()) {
+        QSettings rollback(m_SnapshotPath, QSettings::IniFormat);
+        rollback.beginGroup(ROOT_GROUP);
+        rollback.beginGroup(HOSTS_GROUP);
+        rollback.beginGroup(hostKey(hostUuid));
+        rollback.setValue(ACTIVE_PROFILE, oldActiveProfile);
+        rollback.sync();
+        m_LocalSettingsDirty = wasLocallyDirty;
+        emit localSettingsDirtyChanged();
+        return false;
+    }
     locker.unlock();
     emit profilesChanged(hostUuid);
     return true;
@@ -229,7 +797,7 @@ bool StreamProfileManager::activateProfile(const QString& hostUuid, const QStrin
 void StreamProfileManager::loadProfile(const QString& hostUuid, const QString& profileId,
                                        QString& name, StreamingPreferences& preferences)
 {
-    QSettings settings;
+    QSettings settings(m_SnapshotPath, QSettings::IniFormat);
     settings.beginGroup(ROOT_GROUP);
     settings.beginGroup(HOSTS_GROUP);
     settings.beginGroup(hostKey(hostUuid));
@@ -243,7 +811,7 @@ void StreamProfileManager::loadProfile(const QString& hostUuid, const QString& p
 void StreamProfileManager::saveProfile(const QString& hostUuid, const QString& profileId,
                                        const QString& name, const StreamingPreferences& preferences)
 {
-    QSettings settings;
+    QSettings settings(m_SnapshotPath, QSettings::IniFormat);
     settings.beginGroup(ROOT_GROUP);
     settings.beginGroup(HOSTS_GROUP);
     settings.beginGroup(hostKey(hostUuid));
@@ -267,7 +835,7 @@ StreamProfileEditor* StreamProfileManager::createEditor(const QString& hostUuid,
 
     QMutexLocker locker(&m_Mutex);
     if (newProfile) {
-        QSettings settings;
+        QSettings settings(m_SnapshotPath, QSettings::IniFormat);
         settings.beginGroup(ROOT_GROUP);
         settings.beginGroup(HOSTS_GROUP);
         settings.beginGroup(hostKey(hostUuid));
@@ -277,7 +845,7 @@ StreamProfileEditor* StreamProfileManager::createEditor(const QString& hostUuid,
     }
     else {
         if (id.isEmpty()) {
-            QSettings settings;
+            QSettings settings(m_SnapshotPath, QSettings::IniFormat);
             settings.beginGroup(ROOT_GROUP);
             settings.beginGroup(HOSTS_GROUP);
             settings.beginGroup(hostKey(hostUuid));
@@ -314,43 +882,111 @@ StreamingPreferences* StreamProfileManager::createActiveSettings(const QString& 
 
 int StreamProfileManager::profileCount(const QString& hostUuid)
 {
-    QSettings settings;
+    QSettings settings(m_SnapshotPath, QSettings::IniFormat);
     settings.beginGroup(ROOT_GROUP);
     settings.beginGroup(HOSTS_GROUP);
     settings.beginGroup(hostKey(hostUuid));
     return settings.value(PROFILE_ORDER).toStringList().count();
 }
 
-bool StreamProfileManager::saveEditor(StreamProfileEditor* editor)
+bool StreamProfileManager::saveEditor(StreamProfileEditor* editor, bool overrideExternal)
 {
     QMutexLocker locker(&m_Mutex);
+    const bool wasLocallyDirty = m_LocalSettingsDirty;
     if (editor->m_TemplateMode) {
+        StreamingPreferences previousTemplate;
+        loadTemplate(previousTemplate);
         saveTemplate(*editor->m_Settings);
+        if (overrideExternal) {
+            QSettings appSettings(m_SnapshotPath, QSettings::IniFormat);
+            StreamingPreferences::get()->saveApplicationSettings(appSettings);
+            appSettings.sync();
+        }
+        m_LocalSettingsDirty = true;
+        emit localSettingsDirtyChanged();
+        if (!publishSnapshot(overrideExternal)) {
+            saveTemplate(previousTemplate);
+            m_LocalSettingsDirty = wasLocallyDirty;
+            emit localSettingsDirtyChanged();
+            return false;
+        }
         return true;
     }
     if (editor->m_Name.trimmed().isEmpty()) {
+        setLastError(tr("Profile name cannot be empty."));
         return false;
     }
 
-    QSettings settings;
+    QSettings settings(m_SnapshotPath, QSettings::IniFormat);
     settings.beginGroup(ROOT_GROUP);
     settings.beginGroup(HOSTS_GROUP);
     settings.beginGroup(hostKey(editor->m_HostUuid));
     QStringList order = settings.value(PROFILE_ORDER).toStringList();
+    const QStringList originalOrder = order;
+    const QString originalActiveProfile = settings.value(ACTIVE_PROFILE).toString();
+    const int originalNextNumber = settings.value(NEXT_PROFILE_NUMBER, 1).toInt();
+    QString originalName;
+    StreamingPreferences originalSettings;
+    if (!editor->m_NewProfile) {
+        loadProfile(editor->m_HostUuid, editor->m_ProfileId, originalName, originalSettings);
+    }
 
+    const QString savedProfileId = editor->m_NewProfile ? createProfileId() : editor->m_ProfileId;
     if (editor->m_NewProfile) {
-        editor->m_ProfileId = createProfileId();
-        order.append(editor->m_ProfileId);
+        order.append(savedProfileId);
         settings.setValue(PROFILE_ORDER, order);
         settings.setValue(NEXT_PROFILE_NUMBER,
                           settings.value(NEXT_PROFILE_NUMBER, 1).toInt() + 1);
-        editor->m_NewProfile = false;
+    }
+    else if (!order.contains(savedProfileId)) {
+        // The profile may have been deleted by another instance after this
+        // editor was opened. An explicit Save resurrects its stable ID.
+        order.append(savedProfileId);
+        settings.setValue(PROFILE_ORDER, order);
     }
 
-    saveProfile(editor->m_HostUuid, editor->m_ProfileId,
+    saveProfile(editor->m_HostUuid, savedProfileId,
                 editor->m_Name.trimmed(), *editor->m_Settings);
-    settings.setValue(ACTIVE_PROFILE, editor->m_ProfileId);
+    settings.setValue(ACTIVE_PROFILE, savedProfileId);
     settings.sync();
+    if (overrideExternal) {
+        QSettings appSettings(m_SnapshotPath, QSettings::IniFormat);
+        StreamingPreferences::get()->saveApplicationSettings(appSettings);
+        appSettings.sync();
+    }
+    m_LocalSettingsDirty = true;
+    emit localSettingsDirtyChanged();
+    if (!publishSnapshot(overrideExternal)) {
+        QSettings rollback(m_SnapshotPath, QSettings::IniFormat);
+        rollback.beginGroup(ROOT_GROUP);
+        rollback.beginGroup(HOSTS_GROUP);
+        rollback.beginGroup(hostKey(editor->m_HostUuid));
+        rollback.setValue(PROFILE_ORDER, originalOrder);
+        rollback.setValue(ACTIVE_PROFILE, originalActiveProfile);
+        rollback.setValue(NEXT_PROFILE_NUMBER, originalNextNumber);
+        rollback.endGroup();
+        rollback.endGroup();
+        rollback.endGroup();
+        rollback.sync();
+        if (editor->m_NewProfile) {
+            QSettings cleanup(m_SnapshotPath, QSettings::IniFormat);
+            cleanup.beginGroup(ROOT_GROUP);
+            cleanup.beginGroup(HOSTS_GROUP);
+            cleanup.beginGroup(hostKey(editor->m_HostUuid));
+            cleanup.beginGroup("profiles");
+            cleanup.remove(savedProfileId);
+            cleanup.sync();
+        }
+        else {
+            saveProfile(editor->m_HostUuid, editor->m_ProfileId,
+                        originalName, originalSettings);
+        }
+        m_LocalSettingsDirty = wasLocallyDirty;
+        emit localSettingsDirtyChanged();
+        return false;
+    }
+    editor->m_ProfileId = savedProfileId;
+    editor->m_NewProfile = false;
     locker.unlock();
     emit profilesChanged(editor->m_HostUuid);
     return true;
@@ -363,12 +999,15 @@ bool StreamProfileManager::copyEditor(StreamProfileEditor* editor)
     }
 
     QMutexLocker locker(&m_Mutex);
-    QSettings settings;
+    const bool wasLocallyDirty = m_LocalSettingsDirty;
+    QSettings settings(m_SnapshotPath, QSettings::IniFormat);
     settings.beginGroup(ROOT_GROUP);
     settings.beginGroup(HOSTS_GROUP);
     settings.beginGroup(hostKey(editor->m_HostUuid));
     QStringList order = settings.value(PROFILE_ORDER).toStringList();
+    const QStringList originalOrder = order;
     const int number = settings.value(NEXT_PROFILE_NUMBER, 1).toInt();
+    const QString originalActiveProfile = settings.value(ACTIVE_PROFILE).toString();
     const QString id = createProfileId();
     const QString name = tr("Profile %1").arg(number);
     order.append(id);
@@ -376,6 +1015,23 @@ bool StreamProfileManager::copyEditor(StreamProfileEditor* editor)
     settings.setValue(NEXT_PROFILE_NUMBER, number + 1);
     settings.setValue(ACTIVE_PROFILE, id);
     saveProfile(editor->m_HostUuid, id, name, *editor->m_Settings);
+    m_LocalSettingsDirty = true;
+    emit localSettingsDirtyChanged();
+    if (!publishSnapshot()) {
+        QSettings rollback(m_SnapshotPath, QSettings::IniFormat);
+        rollback.beginGroup(ROOT_GROUP);
+        rollback.beginGroup(HOSTS_GROUP);
+        rollback.beginGroup(hostKey(editor->m_HostUuid));
+        rollback.setValue(PROFILE_ORDER, originalOrder);
+        rollback.setValue(NEXT_PROFILE_NUMBER, number);
+        rollback.setValue(ACTIVE_PROFILE, originalActiveProfile);
+        rollback.beginGroup("profiles");
+        rollback.remove(id);
+        rollback.sync();
+        m_LocalSettingsDirty = wasLocallyDirty;
+        emit localSettingsDirtyChanged();
+        return false;
+    }
 
     editor->m_ProfileId = id;
     editor->m_Name = name;
@@ -391,11 +1047,17 @@ bool StreamProfileManager::deleteEditor(StreamProfileEditor* editor)
     }
 
     QMutexLocker locker(&m_Mutex);
-    QSettings settings;
+    const bool wasLocallyDirty = m_LocalSettingsDirty;
+    QSettings settings(m_SnapshotPath, QSettings::IniFormat);
     settings.beginGroup(ROOT_GROUP);
     settings.beginGroup(HOSTS_GROUP);
     settings.beginGroup(hostKey(editor->m_HostUuid));
     QStringList order = settings.value(PROFILE_ORDER).toStringList();
+    const QStringList originalOrder = order;
+    const QString originalActiveProfile = settings.value(ACTIVE_PROFILE).toString();
+    QString oldName;
+    StreamingPreferences oldSettings;
+    loadProfile(editor->m_HostUuid, editor->m_ProfileId, oldName, oldSettings);
     if (order.count() <= 1 || !order.removeOne(editor->m_ProfileId)) {
         return false;
     }
@@ -407,6 +1069,23 @@ bool StreamProfileManager::deleteEditor(StreamProfileEditor* editor)
     settings.beginGroup("profiles");
     settings.remove(editor->m_ProfileId);
     settings.sync();
+    m_LocalSettingsDirty = true;
+    emit localSettingsDirtyChanged();
+    if (!publishSnapshot()) {
+        QSettings rollback(m_SnapshotPath, QSettings::IniFormat);
+        rollback.beginGroup(ROOT_GROUP);
+        rollback.beginGroup(HOSTS_GROUP);
+        rollback.beginGroup(hostKey(editor->m_HostUuid));
+        rollback.setValue(PROFILE_ORDER, originalOrder);
+        rollback.setValue(ACTIVE_PROFILE, originalActiveProfile);
+        rollback.endGroup();
+        rollback.endGroup();
+        rollback.endGroup();
+        saveProfile(editor->m_HostUuid, editor->m_ProfileId, oldName, oldSettings);
+        m_LocalSettingsDirty = wasLocallyDirty;
+        emit localSettingsDirtyChanged();
+        return false;
+    }
     locker.unlock();
     emit profilesChanged(editor->m_HostUuid);
     return true;
@@ -418,7 +1097,19 @@ bool StreamProfileManager::setEditorAsDefault(StreamProfileEditor* editor)
         return false;
     }
     QMutexLocker locker(&m_Mutex);
+    const bool wasLocallyDirty = m_LocalSettingsDirty;
+    QString oldName;
+    StreamingPreferences oldSettings;
+    loadTemplate(oldSettings);
     saveTemplate(*editor->m_Settings);
+    m_LocalSettingsDirty = true;
+    emit localSettingsDirtyChanged();
+    if (!publishSnapshot()) {
+        saveTemplate(oldSettings);
+        m_LocalSettingsDirty = wasLocallyDirty;
+        emit localSettingsDirtyChanged();
+        return false;
+    }
     return true;
 }
 
@@ -430,7 +1121,7 @@ bool StreamProfileManager::switchEditorProfile(
     }
 
     QMutexLocker locker(&m_Mutex);
-    QSettings settings;
+    QSettings settings(m_SnapshotPath, QSettings::IniFormat);
     settings.beginGroup(ROOT_GROUP);
     settings.beginGroup(HOSTS_GROUP);
     settings.beginGroup(hostKey(editor->m_HostUuid));
@@ -439,12 +1130,31 @@ bool StreamProfileManager::switchEditorProfile(
         return false;
     }
 
-    editor->m_ProfileId = profileId;
-    editor->m_NewProfile = false;
-    loadProfile(editor->m_HostUuid, profileId, editor->m_Name,
-                *editor->m_Settings);
+    const QString oldProfileId = editor->m_ProfileId;
+    const QString oldName = editor->m_Name;
+    const bool wasLocallyDirty = m_LocalSettingsDirty;
+    QString newName;
+    StreamingPreferences newSettings;
+    loadProfile(editor->m_HostUuid, profileId, newName, newSettings);
     settings.setValue(ACTIVE_PROFILE, profileId);
     settings.sync();
+    m_LocalSettingsDirty = true;
+    emit localSettingsDirtyChanged();
+    if (!publishSnapshot()) {
+        QSettings rollback(m_SnapshotPath, QSettings::IniFormat);
+        rollback.beginGroup(ROOT_GROUP);
+        rollback.beginGroup(HOSTS_GROUP);
+        rollback.beginGroup(hostKey(editor->m_HostUuid));
+        rollback.setValue(ACTIVE_PROFILE, oldProfileId);
+        rollback.sync();
+        m_LocalSettingsDirty = wasLocallyDirty;
+        emit localSettingsDirtyChanged();
+        return false;
+    }
+    editor->m_ProfileId = profileId;
+    editor->m_Name = newName;
+    editor->m_NewProfile = false;
+    editor->m_Settings->copyStreamSettingsFrom(newSettings);
     locker.unlock();
 
     editor->acceptCurrentState();
@@ -460,7 +1170,7 @@ bool StreamProfileManager::beginEditorProfile(StreamProfileEditor* editor)
     }
 
     QMutexLocker locker(&m_Mutex);
-    QSettings settings;
+    QSettings settings(m_SnapshotPath, QSettings::IniFormat);
     settings.beginGroup(ROOT_GROUP);
     settings.beginGroup(HOSTS_GROUP);
     settings.beginGroup(hostKey(editor->m_HostUuid));
@@ -480,11 +1190,36 @@ bool StreamProfileManager::beginEditorProfile(StreamProfileEditor* editor)
 void StreamProfileManager::removeHost(const QString& hostUuid)
 {
     QMutexLocker locker(&m_Mutex);
-    QSettings settings;
+    const bool wasLocallyDirty = m_LocalSettingsDirty;
+    const QString prefix = QStringLiteral("streamProfiles/hosts/%1/").arg(hostKey(hostUuid));
+    QSettings settings(m_SnapshotPath, QSettings::IniFormat);
+    QVariantMap originalValues;
+    for (const QString& key : settings.allKeys()) {
+        if (key.startsWith(prefix)) {
+            originalValues.insert(key, settings.value(key));
+        }
+    }
+    if (originalValues.isEmpty()) return;
     settings.beginGroup(ROOT_GROUP);
     settings.beginGroup(HOSTS_GROUP);
     settings.remove(hostKey(hostUuid));
     settings.sync();
+    m_LocalSettingsDirty = true;
+    emit localSettingsDirtyChanged();
+    if (!publishSnapshot()) {
+        QSettings rollback(m_SnapshotPath, QSettings::IniFormat);
+        for (const QString& key : rollback.allKeys()) {
+            if (key.startsWith(prefix)) rollback.remove(key);
+        }
+        for (auto it = originalValues.constBegin(); it != originalValues.constEnd(); ++it) {
+            rollback.setValue(it.key(), it.value());
+        }
+        rollback.sync();
+        m_LocalSettingsDirty = wasLocallyDirty;
+        emit localSettingsDirtyChanged();
+        updateInstanceStatus();
+        return;
+    }
     locker.unlock();
     emit profilesChanged(hostUuid);
 }
@@ -507,6 +1242,8 @@ StreamProfileEditor::StreamProfileEditor(StreamProfileManager* manager,
       m_NewProfile(newProfile),
       m_TemplateMode(templateMode)
 {
+    connect(m_Manager, &StreamProfileManager::lastErrorChanged,
+            this, &StreamProfileEditor::lastErrorChanged);
 #define TRACK(signal) connect(m_Settings, &StreamingPreferences::signal, this, &StreamProfileEditor::updateDirty)
     TRACK(displayModeChanged); TRACK(bitrateChanged); TRACK(unlockBitrateChanged);
     TRACK(autoAdjustBitrateChanged); TRACK(enableVsyncChanged); TRACK(gameOptimizationsChanged);
@@ -514,11 +1251,17 @@ StreamProfileEditor::StreamProfileEditor(StreamProfileManager* manager,
     TRACK(absoluteMouseModeChanged); TRACK(absoluteTouchModeChanged); TRACK(audioConfigChanged);
     TRACK(videoCodecConfigChanged); TRACK(enableHdrChanged); TRACK(enableYUV444Changed);
     TRACK(videoDecoderSelectionChanged); TRACK(windowModeChanged); TRACK(framePacingChanged);
+    TRACK(enableVrrChanged); TRACK(vrrSmoothnessChanged);
     TRACK(connectionWarningsChanged); TRACK(configurationWarningsChanged); TRACK(gamepadMouseChanged);
     TRACK(showPerformanceOverlayChanged); TRACK(mouseButtonsChanged); TRACK(muteOnFocusLossChanged);
     TRACK(backgroundGamepadChanged); TRACK(reverseScrollDirectionChanged); TRACK(swapFaceButtonsChanged);
     TRACK(captureSysKeysModeChanged); TRACK(keepAwakeChanged);
 #undef TRACK
+}
+
+QString StreamProfileEditor::lastError() const
+{
+    return m_Manager->lastError();
 }
 
 void StreamProfileEditor::setName(const QString& name)
@@ -559,9 +1302,9 @@ bool StreamProfileEditor::canDelete() const
            m_Manager->profileCount(m_HostUuid) > 1;
 }
 
-bool StreamProfileEditor::save()
+bool StreamProfileEditor::save(bool overrideExternal)
 {
-    if (!m_Manager->saveEditor(this)) {
+    if (!m_Manager->saveEditor(this, overrideExternal)) {
         return false;
     }
     emit profileIdChanged();
@@ -630,7 +1373,6 @@ bool StreamProfileEditor::switchToProfile(const QString& profileId)
     emit canDeleteChanged();
     return true;
 }
-
 bool StreamProfileEditor::beginNewProfile()
 {
     if (!m_Manager->beginEditorProfile(this)) {

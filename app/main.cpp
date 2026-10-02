@@ -477,6 +477,7 @@ int main(int argc, char *argv[])
         Path::initialize(false);
     }
 
+
     // Override the default QML cache directory with the one we chose
     if (qEnvironmentVariableIsEmpty("QML_DISK_CACHE_PATH")) {
         qputenv("QML_DISK_CACHE_PATH", Path::getQmlCacheDir().toUtf8());
@@ -788,6 +789,12 @@ int main(int argc, char *argv[])
     }
 
     QGuiApplication app(argc, argv);
+
+    // Establish the per-process settings snapshot before global preferences
+    // are loaded or saved.
+    if (!StreamProfileManager::get()->isReady()) {
+        return 1;
+    }
     configureTlsBackend();
 
 #ifdef Q_OS_DARWIN

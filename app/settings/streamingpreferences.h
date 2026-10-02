@@ -19,7 +19,7 @@ public:
     Q_INVOKABLE static int
     getDefaultBitrate(int width, int height, int fps, bool yuv444);
 
-    Q_INVOKABLE void save();
+    Q_INVOKABLE bool save();
     Q_INVOKABLE void resetToStock();
 
     void reload();
@@ -28,6 +28,8 @@ public:
     bool streamSettingsValid() const;
     void loadStreamSettings(QSettings& settings);
     void saveStreamSettings(QSettings& settings) const;
+    void saveApplicationSettings(QSettings& settings) const;
+    void loadApplicationSettings(QSettings& settings);
     void notifyAllChanged();
 
     enum AudioConfig

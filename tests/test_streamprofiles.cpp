@@ -8,9 +8,34 @@
 #include <QQmlEngine>
 #include <QSettings>
 #include <QFileInfo>
+#include <QLockFile>
 #include <QTemporaryDir>
 
 #include <memory>
+
+static bool bumpExternalSettingsRevision(QSettings& settings)
+{
+    const QString lockPath = QFileInfo(settings.fileName()).absolutePath() +
+                             QStringLiteral("/moonlight-settings.lock");
+    QLockFile lock(lockPath);
+    lock.setStaleLockTime(30000);
+    if (!lock.tryLock(1000)) return false;
+    settings.sync();
+    const qulonglong revision = settings.value(
+        QStringLiteral("settingsCoordination/revision"), 0).toULongLong();
+    settings.setValue(QStringLiteral("settingsCoordination/revision"), revision + 1);
+    settings.setValue(QStringLiteral("settingsCoordination/changedBy"), QStringLiteral("test-writer"));
+    settings.setValue(QStringLiteral("settingsCoordination/instanceNumber"), 2);
+    settings.setValue(QStringLiteral("settingsCoordination/changedAt"), QStringLiteral("test-time"));
+    settings.sync();
+    return settings.status() == QSettings::NoError;
+}
+
+static bool reloadTestSnapshot(StreamProfileManager* manager)
+{
+    return manager->reloadSnapshot(QString(), true)
+        .value(QStringLiteral("error")).toString().isEmpty();
+}
 
 class StreamProfileTests : public QObject
 {
@@ -21,6 +46,11 @@ private slots:
     void singletonSurvivesQmlEngineShutdown();
     void profileLifecycle();
     void editorProfileSwitching();
+    void vrrChangesMarkProfileDirty();
+    void settingsCoordinationDetectsReloadAndOwnership();
+    void settingsCoordinationIndependentSnapshots();
+    void settingsCoordinationReloadNotifiesAndResavesDeletedProfile();
+    void settingsCoordinationLockFailureDoesNotAdvanceRevision();
     void serializationAndCorruptData();
     void cliOverridesAreTemporary();
     void uiFramePacingPreference();
@@ -252,13 +282,248 @@ void StreamProfileTests::editorProfileSwitching()
     QCOMPARE(manager->activeProfileId(host), secondId);
 }
 
+void StreamProfileTests::vrrChangesMarkProfileDirty()
+{
+    StreamProfileManager* manager = StreamProfileManager::get();
+    const QString host = QStringLiteral("vrr-dirty-host");
+    std::unique_ptr<StreamProfileEditor> editor(
+        manager->createEditor(host, manager->activeProfileId(host), false));
+    QVERIFY(!editor->dirty());
+
+    QVERIFY(editor->settings()->setProperty("enableVrr", true));
+    QVERIFY(editor->dirty());
+    QVERIFY(editor->settings()->setProperty("enableVrr", false));
+    QVERIFY(!editor->dirty());
+    QVERIFY(editor->settings()->setProperty("enableVrr", true));
+    QVERIFY(editor->dirty());
+    QVERIFY(editor->save());
+    QVERIFY(!editor->dirty());
+
+    QVERIFY(editor->settings()->setProperty("vrrSmoothness", true));
+    QVERIFY(editor->dirty());
+    QVERIFY(editor->settings()->setProperty("vrrSmoothness", false));
+    QVERIFY(!editor->dirty());
+    QVERIFY(editor->settings()->setProperty("vrrSmoothness", true));
+    QVERIFY(editor->dirty());
+    QVERIFY(editor->save());
+    QVERIFY(!editor->dirty());
+
+    QVERIFY(editor->settings()->setProperty("fps", 120));
+    QVERIFY(editor->dirty());
+    QVERIFY(editor->save());
+
+    std::unique_ptr<StreamingPreferences> saved(manager->createActiveSettings(host));
+    QVERIFY(saved->enableVrr);
+    QVERIFY(saved->vrrSmoothness);
+    QCOMPARE(saved->fps, 120);
+}
+
+void StreamProfileTests::settingsCoordinationDetectsReloadAndOwnership()
+{
+    StreamProfileManager* manager = StreamProfileManager::get();
+    QVERIFY(manager->isReady());
+    const QString host = QStringLiteral("coordination-host");
+    QVERIFY(!manager->profiles(host).isEmpty());
+    const QString profileId = manager->activeProfileId(host);
+    QVERIFY(!profileId.isEmpty());
+
+    QSettings shared;
+    qulonglong revision = shared.value(QStringLiteral("settingsCoordination/revision"), 0).toULongLong();
+    shared.setValue(QStringLiteral("settingsCoordination/revision"), revision + 1);
+    shared.setValue(QStringLiteral("settingsCoordination/changedBy"), QStringLiteral("external-instance"));
+    shared.setValue(QStringLiteral("settingsCoordination/instanceNumber"), 2);
+    shared.setValue(QStringLiteral("settingsCoordination/changedAt"), QStringLiteral("test-time"));
+    QVERIFY(bumpExternalSettingsRevision(shared));
+
+    QVariantMap external = manager->checkForExternalChanges();
+    QVERIFY2(external.value(QStringLiteral("error")).toString().isEmpty(),
+             qPrintable(external.value(QStringLiteral("error")).toString()));
+    QVERIFY(external.value(QStringLiteral("changed")).toBool());
+    QCOMPARE(external.value(QStringLiteral("changedBy")).toString(), QStringLiteral("test-writer"));
+    // A writer can advance the revision after the dialog data was captured.
+    // An Ignore choice based on the stale observation must not acknowledge it.
+    QVERIFY(bumpExternalSettingsRevision(shared));
+    QVERIFY(!manager->acknowledgeExternalChanges());
+    external = manager->checkForExternalChanges();
+    QVERIFY(external.value(QStringLiteral("changed")).toBool());
+    QVERIFY(manager->acknowledgeExternalChanges());
+    QVERIFY(!manager->checkForExternalChanges().value(QStringLiteral("changed")).toBool());
+    QVERIFY(manager->localSettingsDirty());
+
+    // Ignore keeps the old profile image. Saving that acknowledged local
+    // snapshot takes ownership and advances the shared revision.
+    QVERIFY(manager->saveLocalSnapshot());
+    QVERIFY(!manager->localSettingsDirty());
+    shared.sync();
+    revision = shared.value(QStringLiteral("settingsCoordination/revision")).toULongLong();
+    QVERIFY(revision >= external.value(QStringLiteral("revision")).toULongLong() + 1);
+
+    // A profile edit made externally is detected by stable profile ID and
+    // actual serialized settings, then Reload adopts it.
+    const QString profilePath = QStringLiteral("streamProfiles/hosts/%1/profiles/%2/fps")
+                                    .arg(QString::fromLatin1(host.toUtf8().toHex()), profileId);
+    shared.setValue(profilePath, 144);
+    QVERIFY(bumpExternalSettingsRevision(shared));
+    external = manager->checkForExternalChanges();
+    QVERIFY(external.value(QStringLiteral("changed")).toBool());
+    const QVariantMap reload = manager->reloadSnapshot(host);
+    QVERIFY2(reload.value(QStringLiteral("error")).toString().isEmpty(),
+             qPrintable(reload.value(QStringLiteral("error")).toString()));
+    QCOMPARE(reload.value(QStringLiteral("oldActiveProfileId")).toString(), profileId);
+    QCOMPARE(reload.value(QStringLiteral("activeProfileId")).toString(), profileId);
+    QVERIFY(reload.value(QStringLiteral("activeSettingsChanged")).toBool());
+    std::unique_ptr<StreamingPreferences> adopted(manager->createActiveSettings(host));
+    QCOMPARE(adopted->fps, 144);
+
+    // Explicit Override is allowed to replace the last shared revision.
+    QVERIFY(bumpExternalSettingsRevision(shared));
+    QVERIFY(manager->checkForExternalChanges().value(QStringLiteral("changed")).toBool());
+    QVERIFY(manager->overrideExternalChanges());
+    shared.sync();
+    QCOMPARE(shared.value(QStringLiteral("settingsCoordination/revision")).toULongLong(), revision + 3);
+    QVERIFY(!manager->checkForExternalChanges().value(QStringLiteral("changed")).toBool());
+}
+
+void StreamProfileTests::settingsCoordinationIndependentSnapshots()
+{
+    StreamProfileManager* instanceA = StreamProfileManager::get();
+    const QString host = QStringLiteral("two-instance-host");
+    QVERIFY(!instanceA->profiles(host).isEmpty());
+    const QString profileId = instanceA->activeProfileId(host);
+
+    // A second manager has its own startup snapshot while sharing the same
+    // QSettings store and cross-process lock, matching two live app instances.
+    StreamProfileManager instanceB;
+    QVERIFY(instanceB.isReady());
+    QVERIFY(instanceB.instanceNumber() != instanceA->instanceNumber());
+
+    std::unique_ptr<StreamProfileEditor> editorA(
+        instanceA->createEditor(host, profileId, false));
+    editorA->settings()->fps = 90;
+    emit editorA->settings()->displayModeChanged();
+    QVERIFY(editorA->save());
+
+    const QVariantMap external = instanceB.checkForExternalChanges();
+    QVERIFY(external.value(QStringLiteral("changed")).toBool());
+    QCOMPARE(external.value(QStringLiteral("instanceNumber")).toInt(),
+             instanceA->instanceNumber());
+    QVERIFY(instanceB.acknowledgeExternalChanges());
+
+    // Ignore preserved B's old snapshot. Its later explicit save takes
+    // ownership and writes the full local profile snapshot.
+    std::unique_ptr<StreamProfileEditor> editorB(
+        instanceB.createEditor(host, profileId, false));
+    editorB->settings()->fps = 120;
+    emit editorB->settings()->displayModeChanged();
+    QVERIFY(editorB->save());
+    QVERIFY(instanceA->checkForExternalChanges().value(QStringLiteral("changed")).toBool());
+
+    QSettings shared;
+    const QString fpsPath = QStringLiteral("streamProfiles/hosts/%1/profiles/%2/fps")
+                                .arg(QString::fromLatin1(host.toUtf8().toHex()), profileId);
+    shared.sync();
+    QCOMPARE(shared.value(fpsPath).toInt(), 120);
+}
+
+void StreamProfileTests::settingsCoordinationReloadNotifiesAndResavesDeletedProfile()
+{
+    StreamProfileManager* manager = StreamProfileManager::get();
+    QVERIFY(manager->isReady());
+    const QVariantMap initialReload = manager->reloadSnapshot(QString(), true);
+    QVERIFY2(initialReload.value(QStringLiteral("error")).toString().isEmpty(),
+             qPrintable(initialReload.value(QStringLiteral("error")).toString()));
+    const QString host = QStringLiteral("reload-cache-host");
+    QVERIFY(!manager->profiles(host).isEmpty());
+    const QString profileId = manager->activeProfileId(host);
+    QVERIFY(!profileId.isEmpty());
+
+    std::unique_ptr<StreamProfileEditor> editor(
+        manager->createEditor(host, profileId, false));
+    QVERIFY(editor);
+    editor->settings()->fps = 96;
+    emit editor->settings()->displayModeChanged();
+
+    QSignalSpy profileChanges(manager, &StreamProfileManager::profilesChanged);
+    QSettings shared;
+    shared.sync();
+    const QString hostPath = QStringLiteral("streamProfiles/hosts/%1/")
+                                 .arg(QString::fromLatin1(host.toUtf8().toHex()));
+    QStringList sharedOrder = shared.value(hostPath + QStringLiteral("profileOrder")).toStringList();
+    QVERIFY(sharedOrder.contains(profileId));
+    sharedOrder.removeAll(profileId);
+    shared.setValue(hostPath + QStringLiteral("profileOrder"), sharedOrder);
+    shared.remove(hostPath + QStringLiteral("profiles/") + profileId);
+    shared.setValue(QStringLiteral("streamProfiles/template/fps"), 77);
+    QVERIFY(bumpExternalSettingsRevision(shared));
+
+    const QVariantMap reload = manager->reloadSnapshot(host);
+    QVERIFY2(reload.value(QStringLiteral("error")).toString().isEmpty(),
+             qPrintable(reload.value(QStringLiteral("error")).toString()));
+    QVERIFY(reload.value(QStringLiteral("templateSettingsChanged")).toBool());
+    QVERIFY(reload.value(QStringLiteral("activeSettingsChanged")).toBool());
+    QVERIFY(profileChanges.count() > 0);
+    bool notifiedHost = false;
+    for (const QList<QVariant>& arguments : profileChanges) {
+        if (!arguments.isEmpty() && arguments.first().toString() == host) {
+            notifiedHost = true;
+            break;
+        }
+    }
+    QVERIFY(notifiedHost);
+
+    // Saving the still-open editor is an explicit user action. It restores
+    // the deleted stable ID to the order instead of writing an orphan record.
+    QVERIFY2(editor->save(), qPrintable(editor->lastError()));
+    shared.sync();
+    sharedOrder = shared.value(hostPath + QStringLiteral("profileOrder")).toStringList();
+    QVERIFY(sharedOrder.contains(profileId));
+    QVERIFY(shared.value(hostPath + QStringLiteral("profiles/") + profileId +
+                         QStringLiteral("/fps")).isValid());
+}
+
+void StreamProfileTests::settingsCoordinationLockFailureDoesNotAdvanceRevision()
+{
+    StreamProfileManager* manager = StreamProfileManager::get();
+    QVERIFY(manager->isReady());
+    QSettings shared;
+    qulonglong revision = shared.value(QStringLiteral("settingsCoordination/revision"), 0).toULongLong();
+    QVERIFY(bumpExternalSettingsRevision(shared));
+    QVERIFY(manager->checkForExternalChanges().value(QStringLiteral("changed")).toBool());
+    QVERIFY(manager->acknowledgeExternalChanges());
+
+    const QString lockPath = QFileInfo(shared.fileName()).absolutePath() +
+                             QStringLiteral("/moonlight-settings.lock");
+    QLockFile heldLock(lockPath);
+    heldLock.setStaleLockTime(30000);
+    QVERIFY(heldLock.tryLock(100));
+    StreamingPreferences preferences;
+    preferences.reload();
+    preferences.uiFramePacingMode = StreamingPreferences::UI_FRAME_PACING_UNBOUNDED;
+    QVERIFY(!preferences.save());
+    heldLock.unlock();
+
+    shared.sync();
+    QCOMPARE(shared.value(QStringLiteral("settingsCoordination/revision")).toULongLong(), revision + 1);
+    QVERIFY(manager->localSettingsDirty());
+
+    // The failed save already staged this value locally. An identical retry
+    // must still publish the pending snapshot instead of treating it as a no-op.
+    QVERIFY(preferences.save());
+    shared.sync();
+    QCOMPARE(shared.value(QStringLiteral("settingsCoordination/revision")).toULongLong(), revision + 2);
+    QVERIFY(!manager->localSettingsDirty());
+}
+
 void StreamProfileTests::uiFramePacingPreference()
 {
+    StreamProfileManager* manager = StreamProfileManager::get();
     QSettings settings;
     settings.setValue(
         QStringLiteral("uiframepacingmode"),
         static_cast<int>(StreamingPreferences::UI_FRAME_PACING_144));
     settings.sync();
+    QVERIFY(bumpExternalSettingsRevision(settings));
+    QVERIFY(reloadTestSnapshot(manager));
 
     StreamingPreferences preferences;
     preferences.reload();
@@ -268,12 +533,15 @@ void StreamProfileTests::uiFramePacingPreference()
     preferences.uiFramePacingMode =
         StreamingPreferences::UI_FRAME_PACING_UNBOUNDED;
     preferences.save();
+    settings.sync();
     QCOMPARE(
         settings.value(QStringLiteral("uiframepacingmode")).toInt(),
         static_cast<int>(StreamingPreferences::UI_FRAME_PACING_UNBOUNDED));
 
     settings.setValue(QStringLiteral("uiframepacingmode"), 999);
     settings.sync();
+    QVERIFY(bumpExternalSettingsRevision(settings));
+    QVERIFY(reloadTestSnapshot(manager));
     preferences.reload();
     QCOMPARE(preferences.uiFramePacingMode,
              StreamingPreferences::UI_FRAME_PACING_DISABLED);
@@ -281,9 +549,12 @@ void StreamProfileTests::uiFramePacingPreference()
 
 void StreamProfileTests::uiProfileControlsPreference()
 {
+    StreamProfileManager* manager = StreamProfileManager::get();
     QSettings settings;
     settings.remove(QStringLiteral("showpcprofilecontrols"));
     settings.sync();
+    QVERIFY(bumpExternalSettingsRevision(settings));
+    QVERIFY(reloadTestSnapshot(manager));
 
     StreamingPreferences preferences;
     preferences.reload();
@@ -291,6 +562,7 @@ void StreamProfileTests::uiProfileControlsPreference()
 
     preferences.showPcProfileControls = false;
     preferences.save();
+    settings.sync();
     QCOMPARE(
         settings.value(QStringLiteral("showpcprofilecontrols")).toBool(),
         false);
@@ -302,9 +574,12 @@ void StreamProfileTests::uiProfileControlsPreference()
 
 void StreamProfileTests::uiGraphicsPreference()
 {
+    StreamProfileManager* manager = StreamProfileManager::get();
     QSettings settings;
     settings.remove(QStringLiteral("uigraphicsbackend"));
     settings.sync();
+    QVERIFY(bumpExternalSettingsRevision(settings));
+    QVERIFY(reloadTestSnapshot(manager));
 
     StreamingPreferences defaults;
     defaults.reload();
@@ -318,6 +593,8 @@ void StreamProfileTests::uiGraphicsPreference()
         QStringLiteral("uid3d11swapchainmode"),
         static_cast<int>(StreamingPreferences::UI_D3D11_LEGACY));
     settings.sync();
+    QVERIFY(bumpExternalSettingsRevision(settings));
+    QVERIFY(reloadTestSnapshot(manager));
 
     StreamingPreferences preferences;
     preferences.reload();
@@ -331,6 +608,7 @@ void StreamProfileTests::uiGraphicsPreference()
     preferences.uiD3D11SwapchainMode =
         StreamingPreferences::UI_D3D11_FLIP;
     preferences.save();
+    settings.sync();
     QCOMPARE(
         settings.value(QStringLiteral("uigraphicsbackend")).toInt(),
         static_cast<int>(StreamingPreferences::UI_GRAPHICS_D3D11));
@@ -341,6 +619,8 @@ void StreamProfileTests::uiGraphicsPreference()
     settings.setValue(QStringLiteral("uigraphicsbackend"), 999);
     settings.setValue(QStringLiteral("uid3d11swapchainmode"), 999);
     settings.sync();
+    QVERIFY(bumpExternalSettingsRevision(settings));
+    QVERIFY(reloadTestSnapshot(manager));
     preferences.reload();
     QCOMPARE(preferences.uiGraphicsBackend,
              StreamingPreferences::UI_GRAPHICS_AUTOMATIC);
@@ -406,6 +686,9 @@ void StreamProfileTests::serializationAndCorruptData()
     settings.setValue(QStringLiteral("streamProfiles/hosts/%1/activeProfile").arg(hostKey),
                       QStringLiteral("missing-profile"));
     settings.sync();
+
+    QVERIFY(bumpExternalSettingsRevision(settings));
+    QVERIFY(reloadTestSnapshot(manager));
 
     QCOMPARE(manager->activeProfileId(host), editor->profileId());
     std::unique_ptr<StreamingPreferences> recovered(

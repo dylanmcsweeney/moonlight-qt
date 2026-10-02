@@ -11,9 +11,168 @@ Flickable {
     id: appSettings
     objectName: qsTr("Application Settings")
     property bool graphicsRestartRequired: false
+    property bool appPreferencesDirty: false
+    property string closeAction: "back"
     contentWidth: width
     contentHeight: settingsColumn.implicitHeight + 20
     boundsBehavior: Flickable.OvershootBounds
+
+    function savePreferencesNow(afterSave) {
+        if (!StreamingPreferences.save()) {
+            showAppSettingsSaveError()
+            return
+        }
+        appPreferencesDirty = false
+        if (afterSave) {
+            afterSave()
+        }
+    }
+
+    function showAppSettingsSaveError() {
+        appSettingsSaveErrorDialog.text = StreamProfileManager.lastError ?
+                StreamProfileManager.lastError :
+                qsTr("Moonlight could not save the local settings. Check for a newer shared settings change and try again.")
+        appSettingsSaveErrorDialog.open()
+    }
+
+    function updatePreference(propertyName, value, saveImmediately,
+                              afterChange, afterSave) {
+        window.requestSettingsAccess(function() {
+            if (StreamingPreferences[propertyName] === value) {
+                return
+            }
+            StreamingPreferences[propertyName] = value
+            appPreferencesDirty = true
+            if (afterChange) {
+                afterChange()
+            }
+            if (saveImmediately) {
+                savePreferencesNow(afterSave)
+            }
+        })
+    }
+
+    function selectSavedValue(comboBox, model, value) {
+        for (var i = 0; i < model.count; i++) {
+            if (model.get(i).value === value) {
+                comboBox.currentIndex = i
+                return
+            }
+        }
+        comboBox.currentIndex = -1
+    }
+
+    function refreshControls() {
+        selectSavedValue(languageComboBox, languageModel,
+                         StreamingPreferences.language)
+        selectSavedValue(displayModeComboBox, displayModeModel,
+                         StreamingPreferences.uiDisplayMode)
+        selectSavedValue(uiGraphicsBackendComboBox, uiGraphicsBackendModel,
+                         StreamingPreferences.uiGraphicsBackend)
+        selectSavedValue(uiD3D11SwapchainComboBox, uiD3D11SwapchainModel,
+                         StreamingPreferences.uiD3D11SwapchainMode)
+        selectSavedValue(uiFramePacingComboBox, uiFramePacingModel,
+                         StreamingPreferences.uiFramePacingMode)
+    }
+
+    function requestTemplateEditor() {
+        window.requestSettingsAccess(function() {
+            if (appSettings.appPreferencesDirty ||
+                    StreamProfileManager.localSettingsDirty) {
+                closeAction = "template"
+                unsavedAppSettingsDialog.open()
+            } else {
+                openTemplateEditor()
+            }
+        })
+    }
+
+    function openTemplateEditor() {
+        window.openProfileEditor(function() {
+            return StreamProfileManager.createTemplateEditor()
+        })
+    }
+
+    function requestRestart() {
+        window.requestSettingsAccess(function() {
+            if (appPreferencesDirty ||
+                    StreamProfileManager.localSettingsDirty) {
+                closeAction = "restart"
+                unsavedAppSettingsDialog.open()
+            } else if (!UiRendererManager.restartApplication()) {
+                window.showSettingsError(
+                            qsTr("Moonlight could not restart automatically."))
+            }
+        })
+    }
+
+    function requestClose() {
+        if (appPreferencesDirty || StreamProfileManager.localSettingsDirty) {
+            closeAction = "back"
+            unsavedAppSettingsDialog.open()
+            return true
+        }
+        return false
+    }
+
+    function requestApplicationClose() {
+        if (appPreferencesDirty || StreamProfileManager.localSettingsDirty) {
+            closeAction = "quit"
+            unsavedAppSettingsDialog.open()
+            return true
+        }
+        return false
+    }
+
+    function finishCloseAction() {
+        if (closeAction === "quit") {
+            window.requestConfirmedQuit()
+        } else if (closeAction === "restart") {
+            closeAction = "back"
+            if (!UiRendererManager.restartApplication()) {
+                window.showSettingsError(
+                            qsTr("Moonlight could not restart automatically."))
+            }
+        } else if (closeAction === "template") {
+            openTemplateEditor()
+            closeAction = "back"
+        } else {
+            stackView.pop()
+        }
+    }
+
+    function saveAndClose() {
+        window.requestSettingsAccess(function() {
+            var saved = true
+            if (appPreferencesDirty) {
+                saved = StreamingPreferences.save()
+                if (saved) {
+                    appPreferencesDirty = false
+                }
+            }
+            if (saved && !appPreferencesDirty &&
+                    StreamProfileManager.localSettingsDirty) {
+                saved = StreamProfileManager.saveLocalSnapshot()
+            }
+            if (!saved) {
+                showAppSettingsSaveError()
+                return
+            }
+            appPreferencesDirty = false
+            unsavedAppSettingsDialog.close()
+            finishCloseAction()
+        })
+    }
+
+    function discardAndClose() {
+        if (!StreamProfileManager.discardLocalChanges()) {
+            window.showSettingsError(StreamProfileManager.lastError)
+            return
+        }
+        appPreferencesDirty = false
+        unsavedAppSettingsDialog.close()
+        finishCloseAction()
+    }
 
     function preferredWindowWidth() {
         return Math.max(window.initialPcWindowWidth, 900)
@@ -24,6 +183,7 @@ Flickable {
     }
 
     StackView.onActivated: {
+        refreshControls()
         SdlGamepadKeyNavigation.setUiNavMode(true)
         Qt.callLater(function() {
             window.fitWindowForView(preferredWindowWidth(),
@@ -36,10 +196,7 @@ Flickable {
 
     StackView.onDeactivating: {
         SdlGamepadKeyNavigation.setUiNavMode(false)
-        StreamingPreferences.save()
     }
-
-    Component.onDestruction: StreamingPreferences.save()
 
     Column {
         id: settingsColumn
@@ -65,7 +222,7 @@ Flickable {
                 Button {
                     id: defaultProfileButton
                     text: qsTr("Edit Default Streaming Profile")
-                    onClicked: window.openProfileEditor(StreamProfileManager.createTemplateEditor())
+                    onClicked: appSettings.requestTemplateEditor()
                 }
             }
         }
@@ -126,13 +283,14 @@ Flickable {
                     onActivated: {
                         var language = languageModel.get(currentIndex).value
                         if (language !== StreamingPreferences.language) {
-                            StreamingPreferences.language = language
-                            StreamingPreferences.save()
-                            if (!StreamingPreferences.retranslate()) {
-                                ToolTip.show(qsTr("You must restart Moonlight for this change to take effect"), 5000)
-                            } else {
-                                window.clearOnBack = true
-                            }
+                            appSettings.updatePreference("language", language,
+                                    true, null, function() {
+                                if (!StreamingPreferences.retranslate()) {
+                                    ToolTip.show(qsTr("You must restart Moonlight for this change to take effect"), 5000)
+                                } else {
+                                    window.clearOnBack = true
+                                }
+                            })
                         }
                     }
                 }
@@ -143,6 +301,7 @@ Flickable {
                 }
 
                 AutoResizingComboBox {
+                    id: displayModeComboBox
                     visible: SystemProperties.hasDesktopEnvironment
                     textRole: "text"
                     model: ListModel {
@@ -159,7 +318,9 @@ Flickable {
                             }
                         }
                     }
-                    onActivated: StreamingPreferences.uiDisplayMode = displayModeModel.get(currentIndex).value
+                    onActivated: appSettings.updatePreference(
+                            "uiDisplayMode",
+                            displayModeModel.get(currentIndex).value, false)
                 }
 
                 Label {
@@ -192,10 +353,12 @@ Flickable {
                     }
 
                     onActivated: {
-                        StreamingPreferences.uiGraphicsBackend =
-                            uiGraphicsBackendModel.get(currentIndex).value
-                        StreamingPreferences.save()
-                        appSettings.graphicsRestartRequired = true
+                        appSettings.updatePreference(
+                                "uiGraphicsBackend",
+                                uiGraphicsBackendModel.get(currentIndex).value,
+                                true, function() {
+                                    appSettings.graphicsRestartRequired = true
+                                })
                     }
                 }
 
@@ -229,10 +392,12 @@ Flickable {
                     }
 
                     onActivated: {
-                        StreamingPreferences.uiD3D11SwapchainMode =
-                            uiD3D11SwapchainModel.get(currentIndex).value
-                        StreamingPreferences.save()
-                        appSettings.graphicsRestartRequired = true
+                        appSettings.updatePreference(
+                                "uiD3D11SwapchainMode",
+                                uiD3D11SwapchainModel.get(currentIndex).value,
+                                true, function() {
+                                    appSettings.graphicsRestartRequired = true
+                                })
                     }
                 }
 
@@ -260,7 +425,7 @@ Flickable {
                 Button {
                     visible: appSettings.graphicsRestartRequired
                     text: qsTr("Restart Now")
-                    onClicked: UiRendererManager.restartApplication()
+                    onClicked: appSettings.requestRestart()
                 }
 
                 Label {
@@ -293,9 +458,10 @@ Flickable {
                     }
 
                     onActivated: {
-                        StreamingPreferences.uiFramePacingMode =
-                            uiFramePacingModel.get(currentIndex).value
-                        StreamingPreferences.save()
+                        appSettings.updatePreference(
+                                "uiFramePacingMode",
+                                uiFramePacingModel.get(currentIndex).value,
+                                true)
                     }
                 }
 
@@ -329,39 +495,44 @@ Flickable {
                     text: qsTr("Automatically find PCs on the local network (Recommended)")
                     checked: StreamingPreferences.enableMdns
                     onToggled: {
-                        StreamingPreferences.enableMdns = checked
-                        if (window.pollingActive) {
-                            ComputerManager.stopPollingAsync()
-                            ComputerManager.startPolling()
-                        }
+                        appSettings.updatePreference("enableMdns", checked,
+                                false, function() {
+                                    if (window.pollingActive) {
+                                        ComputerManager.stopPollingAsync()
+                                        ComputerManager.startPolling()
+                                    }
+                                })
                     }
                 }
 
                 CheckBox {
                     text: qsTr("Automatically detect blocked connections (Recommended)")
                     checked: StreamingPreferences.detectNetworkBlocking
-                    onToggled: StreamingPreferences.detectNetworkBlocking = checked
+                    onToggled: appSettings.updatePreference(
+                            "detectNetworkBlocking", checked, false)
                 }
 
                 CheckBox {
                     visible: SystemProperties.hasDiscordIntegration
                     text: qsTr("Discord Rich Presence integration")
                     checked: StreamingPreferences.richPresence
-                    onToggled: StreamingPreferences.richPresence = checked
+                    onToggled: appSettings.updatePreference(
+                            "richPresence", checked, false)
                 }
 
                 CheckBox {
                     text: qsTr("Use Nintendo-style buttons for Moonlight menus")
                     checked: StreamingPreferences.uiSwapFaceButtons
-                    onToggled: StreamingPreferences.uiSwapFaceButtons = checked
+                    onToggled: appSettings.updatePreference(
+                            "uiSwapFaceButtons", checked, false)
                 }
 
                 CheckBox {
                     text: qsTr("Show streaming profile controls on PC and app pages")
                     checked: StreamingPreferences.showPcProfileControls
                     onToggled: {
-                        StreamingPreferences.showPcProfileControls = checked
-                        StreamingPreferences.save()
+                        appSettings.updatePreference(
+                                "showPcProfileControls", checked, true)
                     }
 
                     ToolTip.delay: 1000
@@ -371,6 +542,42 @@ Flickable {
                 }
             }
         }
+    }
+
+    NavigableDialog {
+        id: unsavedAppSettingsDialog
+        title: qsTr("Unsaved Settings")
+        modal: true
+
+        Label {
+            width: 400
+            wrapMode: Text.Wrap
+            text: qsTr("Save this instance's local settings before continuing?")
+        }
+
+        footer: DialogButtonBox {
+            Button {
+                text: qsTr("Save")
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+                onClicked: appSettings.saveAndClose()
+            }
+            Button {
+                text: qsTr("Discard")
+                DialogButtonBox.buttonRole: DialogButtonBox.DestructiveRole
+                onClicked: appSettings.discardAndClose()
+            }
+            Button {
+                text: qsTr("Cancel")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+                onClicked: unsavedAppSettingsDialog.close()
+            }
+        }
+    }
+
+    NavigableMessageDialog {
+        id: appSettingsSaveErrorDialog
+        text: qsTr("Moonlight could not save the local settings. Check for a newer shared settings change and try again.")
+        standardButtons: Dialog.Ok
     }
 
     ScrollBar.vertical: ScrollBar {}

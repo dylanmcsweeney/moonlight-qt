@@ -7,6 +7,7 @@ import QtQuick.Controls.Material 2.2
 import ComputerManager 1.0
 import AutoUpdateChecker 1.0
 import StreamingPreferences 1.0
+import StreamProfileManager 1.0
 import SystemProperties 1.0
 import SdlGamepadKeyNavigation 1.0
 
@@ -19,6 +20,9 @@ ApplicationWindow {
     property bool initialPcWindowSizeApplied: false
     property real initialPcWindowWidth: 0
     property real initialPcWindowHeight: 0
+    property var pendingExternalSettingsAction: null
+    property var pendingExternalReload: null
+    property string pendingGlobalCloseAction: ""
     readonly property int appToolbarBaseMinimumWidth: 900
     readonly property int appToolbarRightReserve: 150
     readonly property int appToolbarTitleGap: 18
@@ -133,6 +137,10 @@ ApplicationWindow {
                 stackView.currentItem.requestApplicationClose &&
                 stackView.currentItem.requestApplicationClose()) {
             close.accepted = false
+        } else if (StreamProfileManager.localSettingsDirty) {
+            close.accepted = false
+            pendingGlobalCloseAction = "window"
+            globalUnsavedSettingsDialog.open()
         }
     }
 
@@ -361,9 +369,436 @@ ApplicationWindow {
 
     function openProfileEditor(editor)
     {
-        var component = Qt.createComponent("SettingsView.qml")
-        var view = component.createObject(stackView, {"profileEditor": editor})
-        stackView.push(view)
+        requestSettingsAccess(function() {
+            var editorObject = typeof editor === "function" ? editor() : editor
+            var component = Qt.createComponent("SettingsView.qml")
+            var view = component.createObject(stackView,
+                                              {"profileEditor": editorObject})
+            stackView.push(view)
+        })
+    }
+
+    function requestSettingsAccess(action)
+    {
+        var result = StreamProfileManager.checkForExternalChanges()
+        if (result.error) {
+            externalSettingsErrorDialog.text =
+                    qsTr("Moonlight could not check for settings changes from another instance: %1")
+                        .arg(result.error)
+            externalSettingsErrorDialog.open()
+            return false
+        }
+
+        if (result.changed) {
+            pendingExternalSettingsAction = action
+            externalSettingsDialog.instanceNumber = result.instanceNumber
+            externalSettingsDialog.changedAt = result.changedAt
+            externalSettingsDialog.open()
+            return false
+        }
+
+        action()
+        return true
+    }
+
+    function showSettingsError(message)
+    {
+        externalSettingsErrorDialog.text = message ? message :
+                qsTr("Moonlight could not save the local settings.")
+        externalSettingsErrorDialog.open()
+    }
+
+    function finishExternalSettingsAction()
+    {
+        var action = pendingExternalSettingsAction
+        pendingExternalSettingsAction = null
+        pendingExternalReload = null
+        if (action) {
+            action()
+        }
+    }
+
+    function requestConfirmedQuit() {
+        if (stackView.currentItem &&
+                stackView.currentItem.requestApplicationClose &&
+                stackView.currentItem.requestApplicationClose()) {
+            return false
+        }
+        if (StreamProfileManager.localSettingsDirty) {
+            pendingGlobalCloseAction = "quit"
+            globalUnsavedSettingsDialog.open()
+            return false
+        }
+        Qt.quit()
+        return true
+    }
+
+    function saveAndFinishGlobalClose() {
+        requestSettingsAccess(function() {
+            if (!StreamProfileManager.saveLocalSnapshot()) {
+                showSettingsError(StreamProfileManager.lastError)
+                return
+            }
+            globalUnsavedSettingsDialog.close()
+            finishGlobalClose()
+        })
+    }
+
+    function discardAndFinishGlobalClose() {
+        if (!StreamProfileManager.discardLocalChanges()) {
+            showSettingsError(StreamProfileManager.lastError)
+            return
+        }
+        globalUnsavedSettingsDialog.close()
+        finishGlobalClose()
+    }
+
+    function finishGlobalClose() {
+        var closeAction = pendingGlobalCloseAction
+        pendingGlobalCloseAction = ""
+        if (closeAction === "quit") {
+            requestConfirmedQuit()
+        } else if (closeAction === "window") {
+            window.close()
+        }
+    }
+
+    function reloadExternalSettings()
+    {
+        externalSettingsDialog.close()
+        var appSettingsPage = stackView.find(function(item) {
+            return item instanceof AppSettingsView
+        })
+        if (StreamProfileManager.localSettingsDirty ||
+                (appSettingsPage && appSettingsPage.appPreferencesDirty)) {
+            externalReloadLocalChangesDialog.open()
+            return
+        }
+        applyExternalSettingsReload()
+    }
+
+    function applyExternalSettingsReload(discardLocalChanges)
+    {
+        var hostUuid = ""
+        if (stackView.currentItem && stackView.currentItem.profileEditor) {
+            hostUuid = stackView.currentItem.profileEditor.hostUuid
+        } else if (stackView.currentItem && stackView.currentItem.hostUuid) {
+            hostUuid = stackView.currentItem.hostUuid
+        }
+        var result = StreamProfileManager.reloadSnapshot(
+                    hostUuid, discardLocalChanges === true)
+        if (result.error) {
+            pendingExternalSettingsAction = null
+            externalSettingsErrorDialog.text =
+                    qsTr("Moonlight could not reload settings from another instance: %1")
+                        .arg(result.error)
+            externalSettingsErrorDialog.open()
+            return
+        }
+
+        var appSettingsPage = stackView.find(function(item) {
+            return item instanceof AppSettingsView
+        })
+        if (appSettingsPage) {
+            appSettingsPage.appPreferencesDirty = false
+            appSettingsPage.refreshControls()
+        }
+
+        if (stackView.currentItem &&
+                stackView.currentItem.refreshSettingsAfterExternalReload) {
+            stackView.currentItem.refreshSettingsAfterExternalReload()
+        } else if (stackView.currentItem &&
+                   stackView.currentItem.refreshProfileControls) {
+            stackView.currentItem.refreshProfileControls()
+        }
+
+        pendingExternalReload = result
+        var editorPage = stackView.find(function(item) {
+            return item instanceof SettingsView
+        })
+        var editorIsTemplate = editorPage && editorPage.profileEditor &&
+                editorPage.profileEditor.templateMode
+        var editorMatchesActive = editorPage && editorPage.profileEditor &&
+                !editorIsTemplate && result.activeSettingsChanged &&
+                editorPage.profileEditor.profileId === result.oldActiveProfileId
+        var editorMatchesTemplate = editorIsTemplate &&
+                result.templateSettingsChanged
+        var editorMatches = editorMatchesActive || editorMatchesTemplate
+
+        if (editorMatches && editorPage.profileEditor.dirty) {
+            reloadEditorChangesDialog.templateEditor = editorMatchesTemplate
+            reloadEditorChangesDialog.open()
+            return
+        }
+
+        if (editorMatches) {
+            editorPage.reloadProfileEditor(result.activeProfileId)
+        }
+        finishExternalSettingsAction()
+    }
+
+    function saveLocalAndReloadExternalSettings()
+    {
+        externalReloadLocalChangesDialog.close()
+        if (!StreamProfileManager.acknowledgeExternalChanges()) {
+            pendingExternalSettingsAction = null
+            showSettingsError(StreamProfileManager.lastError)
+            return
+        }
+        var appSettingsPage = stackView.find(function(item) {
+            return item instanceof AppSettingsView
+        })
+        var saved = true
+        if (appSettingsPage && appSettingsPage.appPreferencesDirty) {
+            saved = StreamingPreferences.save()
+            if (saved) {
+                appSettingsPage.appPreferencesDirty = false
+            }
+        }
+        if (saved && StreamProfileManager.localSettingsDirty) {
+            saved = StreamProfileManager.saveLocalSnapshot()
+        }
+        if (!saved) {
+            pendingExternalSettingsAction = null
+            showSettingsError(StreamProfileManager.lastError)
+            return
+        }
+        if (appSettingsPage) {
+            appSettingsPage.appPreferencesDirty = false
+        }
+        applyExternalSettingsReload()
+    }
+
+    function discardLocalAndReloadExternalSettings()
+    {
+        externalReloadLocalChangesDialog.close()
+        applyExternalSettingsReload(true)
+    }
+
+    function overrideExternalSettings()
+    {
+        externalSettingsDialog.close()
+        var editorPage = stackView.find(function(item) {
+            return item instanceof SettingsView
+        })
+        var appSettingsPage = stackView.find(function(item) {
+            return item instanceof AppSettingsView
+        })
+        var success
+        if (editorPage && editorPage.profileEditor &&
+                editorPage.profileEditor.dirty) {
+            success = editorPage.profileEditor.save(true)
+            if (success && appSettingsPage &&
+                    appSettingsPage.appPreferencesDirty) {
+                success = StreamProfileManager.overrideExternalChanges()
+            }
+        } else {
+            success = StreamProfileManager.overrideExternalChanges()
+        }
+
+        if (!success) {
+            pendingExternalSettingsAction = null
+            var editorError = editorPage && editorPage.profileEditor ?
+                                  editorPage.profileEditor.lastError : ""
+            showSettingsError(editorError ? editorError :
+                                          StreamProfileManager.lastError)
+            return
+        }
+
+        if (appSettingsPage) {
+            appSettingsPage.appPreferencesDirty = false
+        }
+
+        finishExternalSettingsAction()
+    }
+
+    function ignoreExternalSettings()
+    {
+        externalSettingsDialog.close()
+        if (!StreamProfileManager.acknowledgeExternalChanges()) {
+            pendingExternalSettingsAction = null
+            showSettingsError(StreamProfileManager.lastError)
+            return
+        }
+        finishExternalSettingsAction()
+    }
+
+    NavigableDialog {
+        id: externalSettingsDialog
+        property int instanceNumber: 0
+        property string changedAt: ""
+        title: qsTr("Settings Changed in Another Instance")
+        modal: true
+
+        contentItem: ColumnLayout {
+            spacing: 8
+            Label {
+                Layout.maximumWidth: 420
+                wrapMode: Text.Wrap
+                text: qsTr("Moonlight instance %1 changed shared settings%2.")
+                          .arg(externalSettingsDialog.instanceNumber)
+                          .arg(externalSettingsDialog.changedAt ?
+                                   qsTr(" at %1").arg(externalSettingsDialog.changedAt) : "")
+            }
+            Label {
+                Layout.maximumWidth: 420
+                wrapMode: Text.Wrap
+                text: qsTr("Instance numbers are advisory and can change between launches. Choose how this instance should handle the newer settings.")
+            }
+        }
+
+        footer: DialogButtonBox {
+            Button {
+                text: qsTr("Reload")
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+                onClicked: window.reloadExternalSettings()
+            }
+            Button {
+                text: qsTr("Override")
+                DialogButtonBox.buttonRole: DialogButtonBox.DestructiveRole
+                onClicked: window.overrideExternalSettings()
+            }
+            Button {
+                text: qsTr("Ignore")
+                DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
+                onClicked: window.ignoreExternalSettings()
+            }
+        }
+    }
+
+    NavigableDialog {
+        id: reloadEditorChangesDialog
+        property bool templateEditor: false
+        title: templateEditor ? qsTr("Default Profile Template Changed") :
+                               qsTr("Active Profile Changed")
+        modal: true
+
+        contentItem: Label {
+            width: 420
+            wrapMode: Text.Wrap
+            text: reloadEditorChangesDialog.templateEditor ?
+                      qsTr("The default profile template changed in another instance. Save this editor's local values over the shared template, or discard them and reload the template?") :
+                      qsTr("The active profile changed in another instance. Save this editor's local values over the shared profile, or discard them and reload the active profile?")
+        }
+
+        footer: DialogButtonBox {
+            Button {
+                text: qsTr("Save Local")
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+                onClicked: {
+                    reloadEditorChangesDialog.close()
+                    var editorPage = stackView.find(function(item) {
+                        return item instanceof SettingsView
+                    })
+                    if (!editorPage || !editorPage.profileEditor.save(true)) {
+                        pendingExternalSettingsAction = null
+                        pendingExternalReload = null
+                        showSettingsError(editorPage &&
+                                          editorPage.profileEditor ?
+                                              editorPage.profileEditor.lastError :
+                                              StreamProfileManager.lastError)
+                        return
+                    }
+                    finishExternalSettingsAction()
+                }
+            }
+            Button {
+                text: qsTr("Discard and Reload")
+                DialogButtonBox.buttonRole: DialogButtonBox.DestructiveRole
+                onClicked: {
+                    reloadEditorChangesDialog.close()
+                    var editorPage = stackView.find(function(item) {
+                        return item instanceof SettingsView
+                    })
+                    if (editorPage && pendingExternalReload) {
+                        editorPage.profileEditor.discardChanges()
+                        editorPage.reloadProfileEditor(
+                                    pendingExternalReload.activeProfileId)
+                    }
+                    finishExternalSettingsAction()
+                }
+            }
+            Button {
+                text: qsTr("Keep Editing")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+                onClicked: {
+                    reloadEditorChangesDialog.close()
+                    pendingExternalSettingsAction = null
+                    pendingExternalReload = null
+                }
+            }
+        }
+    }
+
+    NavigableDialog {
+        id: externalReloadLocalChangesDialog
+        title: qsTr("Local Settings Changed")
+        modal: true
+
+        contentItem: Label {
+            width: 420
+            wrapMode: Text.Wrap
+            text: qsTr("This instance has local settings changes. Save them before reloading, or discard them and reload the shared settings?")
+        }
+
+        footer: DialogButtonBox {
+            Button {
+                text: qsTr("Save Local")
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+                onClicked: window.saveLocalAndReloadExternalSettings()
+            }
+            Button {
+                text: qsTr("Discard and Reload")
+                DialogButtonBox.buttonRole: DialogButtonBox.DestructiveRole
+                onClicked: window.discardLocalAndReloadExternalSettings()
+            }
+            Button {
+                text: qsTr("Keep Editing")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+                onClicked: {
+                    externalReloadLocalChangesDialog.close()
+                    pendingExternalSettingsAction = null
+                }
+            }
+        }
+    }
+
+    NavigableMessageDialog {
+        id: externalSettingsErrorDialog
+        standardButtons: Dialog.Ok
+    }
+
+    NavigableDialog {
+        id: globalUnsavedSettingsDialog
+        title: qsTr("Unsaved Local Settings")
+        modal: true
+
+        Label {
+            width: 420
+            wrapMode: Text.Wrap
+            text: qsTr("This instance has local settings changes. Save them before closing, discard them, or cancel?")
+        }
+
+        footer: DialogButtonBox {
+            Button {
+                text: qsTr("Save")
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+                onClicked: window.saveAndFinishGlobalClose()
+            }
+            Button {
+                text: qsTr("Discard")
+                DialogButtonBox.buttonRole: DialogButtonBox.DestructiveRole
+                onClicked: window.discardAndFinishGlobalClose()
+            }
+            Button {
+                text: qsTr("Cancel")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+                onClicked: {
+                    pendingGlobalCloseAction = ""
+                    globalUnsavedSettingsDialog.close()
+                }
+            }
+        }
     }
 
     header: ToolBar {
@@ -562,12 +997,14 @@ ApplicationWindow {
                 iconSource:  "qrc:/res/settings.svg"
 
                 onClicked: {
-                    if (stackView.currentItem &&
-                            stackView.currentItem.requestGlobalSettings &&
-                            stackView.currentItem.requestGlobalSettings()) {
-                        return
-                    }
-                    navigateTo("qrc:/gui/AppSettingsView.qml", AppSettingsView)
+                    requestSettingsAccess(function() {
+                        if (stackView.currentItem &&
+                                stackView.currentItem.requestGlobalSettings &&
+                                stackView.currentItem.requestGlobalSettings()) {
+                            return
+                        }
+                        navigateTo("qrc:/gui/AppSettingsView.qml", AppSettingsView)
+                    })
                 }
 
                 Keys.onDownPressed: {
@@ -738,12 +1175,14 @@ ApplicationWindow {
         id: softwareD3D12Dialog
         property string adapterName
         property bool restartFailed: false
+        property string restartError: ""
 
         title: qsTr("Direct3D 12 Hardware Unavailable")
         modal: true
 
         onOpened: {
             restartFailed = false
+            restartError = ""
             softwareRendererFallbackComboBox.forceActiveFocus(Qt.TabFocus)
         }
 
@@ -797,7 +1236,9 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 wrapMode: Text.Wrap
                 color: "#ff8080"
-                text: qsTr("Moonlight could not restart automatically. Change the renderer in Application Settings and restart manually.")
+                text: softwareD3D12Dialog.restartError ?
+                          softwareD3D12Dialog.restartError :
+                          qsTr("Moonlight could not restart automatically. Change the renderer in Application Settings and restart manually.")
             }
         }
 
@@ -818,6 +1259,10 @@ ApplicationWindow {
                     if (!UiRendererManager.restartWithGraphicsConfiguration(
                             selected.backend, selected.swapchain)) {
                         softwareD3D12Dialog.restartFailed = true
+                        softwareD3D12Dialog.restartError =
+                                StreamProfileManager.lastError ?
+                                    StreamProfileManager.lastError :
+                                    qsTr("Moonlight could not save the renderer settings or restart automatically.")
                     }
                 }
             }
@@ -830,7 +1275,7 @@ ApplicationWindow {
         standardButtons: Dialog.Yes | Dialog.No
         text: qsTr("Are you sure you want to quit?")
         // For keyboard/gamepad navigation
-        onAccepted: Qt.quit()
+        onAccepted: window.requestConfirmedQuit()
     }
 
     // HACK: This belongs in StreamSegue but keeping a dialog around after the parent
@@ -847,7 +1292,7 @@ ApplicationWindow {
 
         onClosed: {
             if (quitAfter) {
-                Qt.quit()
+                window.requestConfirmedQuit()
             }
 
             // StreamSegue assumes its dialog will be re-created each time we

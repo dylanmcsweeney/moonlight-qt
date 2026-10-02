@@ -1,4 +1,5 @@
 #include "streamingpreferences.h"
+#include "streamprofilemanager.h"
 #include "utils.h"
 #include "streaming/vrrratepolicy.h"
 
@@ -120,9 +121,8 @@ StreamingPreferences* StreamingPreferences::get(QQmlEngine *qmlEngine)
 
 void StreamingPreferences::reload()
 {
-    QSettings settings;
     resetToStock();
-    loadLegacySettings(settings);
+    StreamProfileManager::get()->loadApplicationPreferences(*this);
 }
 
 void StreamingPreferences::resetToStock()
@@ -189,6 +189,11 @@ void StreamingPreferences::resetToStock()
 }
 
 void StreamingPreferences::loadLegacySettings(QSettings& settings)
+{
+    loadApplicationSettings(settings);
+}
+
+void StreamingPreferences::loadApplicationSettings(QSettings& settings)
 {
     enableMdns = settings.value(SER_MDNS, enableMdns).toBool();
     detectNetworkBlocking = settings.value(SER_DETECTNETBLOCKING, detectNetworkBlocking).toBool();
@@ -349,10 +354,13 @@ QString StreamingPreferences::getSuffixFromLanguage(StreamingPreferences::Langua
     }
 }
 
-void StreamingPreferences::save()
+bool StreamingPreferences::save()
 {
-    QSettings settings;
+    return StreamProfileManager::get()->saveApplicationPreferences(*this);
+}
 
+void StreamingPreferences::saveApplicationSettings(QSettings& settings) const
+{
     settings.setValue(SER_MDNS, enableMdns);
     settings.setValue(SER_DETECTNETBLOCKING, detectNetworkBlocking);
     settings.setValue(SER_RICHPRESENCE, richPresence);

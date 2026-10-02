@@ -344,7 +344,10 @@ bool UiRendererManager::restartWithGraphicsConfiguration(
     m_Preferences->uiD3D11SwapchainMode =
         static_cast<StreamingPreferences::UID3D11SwapchainMode>(
             d3d11SwapchainMode);
-    m_Preferences->save();
+    if (!m_Preferences->save()) {
+        qWarning() << "Unable to persist the selected graphics configuration; restart cancelled";
+        return false;
+    }
     return restartApplication();
 }
 

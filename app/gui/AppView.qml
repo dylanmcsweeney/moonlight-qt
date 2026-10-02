@@ -90,16 +90,29 @@ CenteredGridView {
         activeProfileName = appModel.getActiveProfileName()
     }
 
+    function refreshSettingsAfterExternalReload()
+    {
+        refreshProfileControls()
+        if (profilesDialog.visible) {
+            profilesDialog.refresh()
+        }
+    }
+
     function openProfilesDialog()
     {
-        profilesDialog.refresh()
-        profilesDialog.open()
+        window.requestSettingsAccess(function() {
+            profilesDialog.refresh()
+            profilesDialog.open()
+        })
     }
 
     function openActiveProfileEditor()
     {
-        window.openProfileEditor(
-            StreamProfileManager.createEditor(hostUuid, activeProfileId, false))
+        window.openProfileEditor(function() {
+            return StreamProfileManager.createEditor(hostUuid,
+                                                     activeProfileId,
+                                                     false)
+        })
     }
 
     function preferredWindowWidth()
@@ -467,10 +480,17 @@ CenteredGridView {
                     text: (modelData.active ? "● " : "") + modelData.name
                     highlighted: modelData.active
                     onClicked: {
-                        StreamProfileManager.activateProfile(appGrid.hostUuid,
-                                                             modelData.profileId)
-                        appGrid.refreshProfileControls()
-                        profilesDialog.close()
+                        window.requestSettingsAccess(function() {
+                            if (StreamProfileManager.activateProfile(
+                                        appGrid.hostUuid,
+                                        modelData.profileId)) {
+                                appGrid.refreshProfileControls()
+                                profilesDialog.close()
+                            } else {
+                                window.showSettingsError(
+                                            StreamProfileManager.lastError)
+                            }
+                        })
                     }
                 }
             }
@@ -480,10 +500,11 @@ CenteredGridView {
                 opacity: 0.55
                 text: qsTr("New Profile")
                 onClicked: {
-                    var editor = StreamProfileManager.createEditor(
-                                     appGrid.hostUuid, "", true)
-                    profilesDialog.close()
-                    window.openProfileEditor(editor)
+                    window.openProfileEditor(function() {
+                        profilesDialog.close()
+                        return StreamProfileManager.createEditor(
+                                    appGrid.hostUuid, "", true)
+                    })
                 }
             }
         }

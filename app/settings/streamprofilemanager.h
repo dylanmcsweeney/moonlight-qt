@@ -4,7 +4,9 @@
 
 #include <QMutex>
 #include <QObject>
+#include <QTemporaryDir>
 #include <QVariantList>
+#include <QVariantMap>
 
 class StreamProfileManager;
 
@@ -17,6 +19,7 @@ class StreamProfileEditor : public QObject
     Q_PROPERTY(QString hostUuid READ hostUuid CONSTANT)
     Q_PROPERTY(QString profileId READ profileId NOTIFY profileIdChanged)
     Q_PROPERTY(bool dirty READ dirty NOTIFY dirtyChanged)
+    Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
     Q_PROPERTY(bool newProfile READ isNewProfile NOTIFY newProfileChanged)
     Q_PROPERTY(bool templateMode READ templateMode CONSTANT)
     Q_PROPERTY(bool canDelete READ canDelete NOTIFY canDeleteChanged)
@@ -28,11 +31,12 @@ public:
     QString hostUuid() const { return m_HostUuid; }
     QString profileId() const { return m_ProfileId; }
     bool dirty() const { return m_Dirty; }
+    QString lastError() const;
     bool isNewProfile() const { return m_NewProfile; }
     bool templateMode() const { return m_TemplateMode; }
     bool canDelete() const;
 
-    Q_INVOKABLE bool save();
+    Q_INVOKABLE bool save(bool overrideExternal = false);
     Q_INVOKABLE bool copy();
     Q_INVOKABLE bool remove();
     Q_INVOKABLE bool setAsDefault();
@@ -47,6 +51,7 @@ signals:
     void dirtyChanged();
     void newProfileChanged();
     void canDeleteChanged();
+    void lastErrorChanged();
     void saved();
     void removed();
 
@@ -79,9 +84,28 @@ private:
 class StreamProfileManager : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(int instanceNumber READ instanceNumber CONSTANT)
+    Q_PROPERTY(qulonglong sharedRevision READ sharedRevision NOTIFY sharedRevisionChanged)
+    Q_PROPERTY(bool localSettingsDirty READ localSettingsDirty NOTIFY localSettingsDirtyChanged)
+    Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
 
 public:
     static StreamProfileManager* get();
+
+    int instanceNumber() const { return m_InstanceNumber; }
+    qulonglong sharedRevision() const { return m_AcknowledgedRevision; }
+    bool localSettingsDirty() const { return m_LocalSettingsDirty; }
+    QString lastError() const { return m_LastError; }
+    bool isReady() const { return m_SnapshotReady; }
+    Q_INVOKABLE QVariantMap checkForExternalChanges();
+    Q_INVOKABLE bool acknowledgeExternalChanges();
+    Q_INVOKABLE QVariantMap reloadSnapshot(const QString& hostUuid = QString(),
+                                           bool discardLocalChanges = false);
+    Q_INVOKABLE bool discardLocalChanges();
+    Q_INVOKABLE bool saveLocalSnapshot();
+    Q_INVOKABLE bool overrideExternalChanges();
+    bool loadApplicationPreferences(StreamingPreferences& preferences);
+    bool saveApplicationPreferences(const StreamingPreferences& preferences);
 
     Q_INVOKABLE QVariantList profiles(const QString& hostUuid);
     Q_INVOKABLE QString activeProfileId(const QString& hostUuid);
@@ -99,11 +123,16 @@ public:
 
 signals:
     void profilesChanged(QString hostUuid);
+    void sharedRevisionChanged();
+    void localSettingsDirtyChanged();
+    void lastErrorChanged();
 
 private:
     friend class StreamProfileEditor;
+    friend class StreamProfileTests;
 
     explicit StreamProfileManager(QObject* parent = nullptr);
+    ~StreamProfileManager() override;
 
     QString hostKey(const QString& hostUuid) const;
     QString createProfileId() const;
@@ -115,7 +144,7 @@ private:
                      QString& name, StreamingPreferences& preferences);
     void saveProfile(const QString& hostUuid, const QString& profileId,
                      const QString& name, const StreamingPreferences& preferences);
-    bool saveEditor(StreamProfileEditor* editor);
+    bool saveEditor(StreamProfileEditor* editor, bool overrideExternal);
     bool copyEditor(StreamProfileEditor* editor);
     bool deleteEditor(StreamProfileEditor* editor);
     bool setEditorAsDefault(StreamProfileEditor* editor);
@@ -123,6 +152,26 @@ private:
                              const QString& profileId);
     bool beginEditorProfile(StreamProfileEditor* editor);
     int profileCount(const QString& hostUuid);
+    bool publishSnapshot(bool force = false);
+    bool initializeSnapshot();
+    void registerInstance();
+    void unregisterInstance();
+    void writeInstanceStatus();
+    void updateInstanceStatus();
+    QString sharedStateDirectory() const;
+    QString lockFilePath() const;
+    bool loadSharedIntoSnapshot(qulonglong* revision = nullptr);
+    void setLastError(const QString& message);
 
     QMutex m_Mutex;
+    QTemporaryDir m_SnapshotDirectory;
+    QString m_SnapshotPath;
+    QString m_InstanceId;
+    int m_InstanceNumber = 1;
+    qulonglong m_SnapshotRevision = 0;
+    qulonglong m_AcknowledgedRevision = 0;
+    qulonglong m_LastObservedRevision = 0;
+    bool m_LocalSettingsDirty = false;
+    bool m_SnapshotReady = false;
+    QString m_LastError;
 };

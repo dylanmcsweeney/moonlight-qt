@@ -31,6 +31,13 @@ CenteredGridView {
         updateMargins()
     }
 
+    function refreshSettingsAfterExternalReload()
+    {
+        if (profilesDialog.visible) {
+            profilesDialog.refresh()
+        }
+    }
+
     Component.onCompleted: {
         // Don't show any highlighted item until interacting with them.
         // We do this here instead of onActivated to avoid losing the user's
@@ -146,18 +153,21 @@ CenteredGridView {
 
         function openProfilesDialog()
         {
-            profilesDialog.hostUuid = model.uuid
-            profilesDialog.pcName = model.name
-            profilesDialog.refresh()
-            profilesDialog.open()
+            window.requestSettingsAccess(function() {
+                profilesDialog.hostUuid = model.uuid
+                profilesDialog.pcName = model.name
+                profilesDialog.refresh()
+                profilesDialog.open()
+            })
         }
 
         function openActiveProfileEditor()
         {
-            window.openProfileEditor(
-                StreamProfileManager.createEditor(model.uuid,
-                                                  model.activeProfileId,
-                                                  false))
+            window.openProfileEditor(function() {
+                return StreamProfileManager.createEditor(model.uuid,
+                                                         model.activeProfileId,
+                                                         false)
+            })
         }
 
         Image {
@@ -518,9 +528,16 @@ CenteredGridView {
                     text: (modelData.active ? "● " : "") + modelData.name
                     highlighted: modelData.active
                     onClicked: {
-                        StreamProfileManager.activateProfile(profilesDialog.hostUuid,
-                                                             modelData.profileId)
-                        profilesDialog.close()
+                        window.requestSettingsAccess(function() {
+                            if (StreamProfileManager.activateProfile(
+                                        profilesDialog.hostUuid,
+                                        modelData.profileId)) {
+                                profilesDialog.close()
+                            } else {
+                                window.showSettingsError(
+                                            StreamProfileManager.lastError)
+                            }
+                        })
                     }
                 }
             }
@@ -530,10 +547,11 @@ CenteredGridView {
                 opacity: 0.55
                 text: qsTr("New Profile")
                 onClicked: {
-                    var editor = StreamProfileManager.createEditor(
-                                     profilesDialog.hostUuid, "", true)
-                    profilesDialog.close()
-                    window.openProfileEditor(editor)
+                    window.openProfileEditor(function() {
+                        profilesDialog.close()
+                        return StreamProfileManager.createEditor(
+                                    profilesDialog.hostUuid, "", true)
+                    })
                 }
             }
         }

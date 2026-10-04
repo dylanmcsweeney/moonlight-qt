@@ -6,12 +6,175 @@
 
 #include <QQmlComponent>
 #include <QQmlEngine>
+#include <QGuiApplication>
+#include <QDir>
 #include <QSettings>
 #include <QFileInfo>
 #include <QLockFile>
+#include <QRect>
+#include <QSize>
 #include <QTemporaryDir>
+#include <QVariantList>
+#include <QtQuickControls2/QQuickStyle>
 
 #include <memory>
+
+class SettingsViewSystemStub : public QObject
+{
+    Q_OBJECT
+    Q_PROPERTY(bool hasDesktopEnvironment MEMBER hasDesktopEnvironment CONSTANT)
+    Q_PROPERTY(bool hasPyroWave MEMBER hasPyroWave CONSTANT)
+    Q_PROPERTY(bool rendererAlwaysFullScreen MEMBER rendererAlwaysFullScreen CONSTANT)
+    Q_PROPERTY(bool supportsHdr MEMBER supportsHdr CONSTANT)
+    Q_PROPERTY(QSize maximumResolution MEMBER maximumResolution CONSTANT)
+
+public:
+    bool hasDesktopEnvironment = true;
+    bool hasPyroWave = true;
+    bool rendererAlwaysFullScreen = false;
+    bool supportsHdr = true;
+    QSize maximumResolution{7680, 4320};
+
+    Q_INVOKABLE void refreshDisplays() {}
+    Q_INVOKABLE QRect getNativeResolution(int index) const {
+        return index == 0 ? QRect(0, 0, 1920, 1080) : QRect();
+    }
+    Q_INVOKABLE QRect getSafeAreaResolution(int index) const {
+        return getNativeResolution(index);
+    }
+    Q_INVOKABLE int getRefreshRate(int index) const { return index == 0 ? 60 : 0; }
+};
+
+class SettingsViewNavigationStub : public QObject
+{
+    Q_OBJECT
+public:
+    Q_INVOKABLE void setUiNavMode(bool) {}
+    Q_INVOKABLE int getConnectedGamepads() const { return 0; }
+};
+
+class SettingsViewNetworkBuffersStub : public QObject
+{
+    Q_OBJECT
+    Q_PROPERTY(bool needsFix MEMBER needsFix CONSTANT)
+    Q_PROPERTY(bool canApply MEMBER canApply CONSTANT)
+    Q_PROPERTY(bool busy MEMBER busy CONSTANT)
+    Q_PROPERTY(QString problemText MEMBER problemText CONSTANT)
+    Q_PROPERTY(QString fixDescription MEMBER fixDescription CONSTANT)
+    Q_PROPERTY(QString manualHint MEMBER manualHint CONSTANT)
+    Q_PROPERTY(QString manualCommand MEMBER manualCommand CONSTANT)
+    Q_PROPERTY(QString message MEMBER message CONSTANT)
+
+public:
+    bool needsFix = false;
+    bool canApply = false;
+    bool busy = false;
+    QString problemText, fixDescription, manualHint, manualCommand, message;
+    Q_INVOKABLE void refresh() {}
+    Q_INVOKABLE void apply() {}
+    Q_INVOKABLE void copyCommand() {}
+};
+
+class SettingsViewCalibratorStub : public QObject
+{
+    Q_OBJECT
+    Q_PROPERTY(bool running MEMBER running CONSTANT)
+    Q_PROPERTY(QString message MEMBER message CONSTANT)
+    Q_PROPERTY(QString linkSummary MEMBER linkSummary CONSTANT)
+    Q_PROPERTY(QVariantList results MEMBER results CONSTANT)
+
+public:
+    bool running = false;
+    QString message, linkSummary;
+    QVariantList results;
+    Q_INVOKABLE void start(QObject*, const QString&, int, int, int) {}
+    Q_INVOKABLE void cancel() {}
+};
+
+class SettingsViewSimpleStub : public QObject
+{
+    Q_OBJECT
+};
+
+class SettingsViewAppModelStub : public QObject
+{
+    Q_OBJECT
+};
+
+template <typename T>
+static QObject* settingsViewCppOwned(T* object)
+{
+    QQmlEngine::setObjectOwnership(object, QQmlEngine::CppOwnership);
+    return object;
+}
+
+static QObject* settingsViewSystemStub(QQmlEngine*, QJSEngine*)
+{
+    static SettingsViewSystemStub instance;
+    return settingsViewCppOwned(&instance);
+}
+
+static QObject* settingsViewNavigationStub(QQmlEngine*, QJSEngine*)
+{
+    static SettingsViewNavigationStub instance;
+    return settingsViewCppOwned(&instance);
+}
+
+static QObject* settingsViewNetworkBuffersStub(QQmlEngine*, QJSEngine*)
+{
+    static SettingsViewNetworkBuffersStub instance;
+    return settingsViewCppOwned(&instance);
+}
+
+static QObject* settingsViewCalibratorStub(QQmlEngine*, QJSEngine*)
+{
+    static SettingsViewCalibratorStub instance;
+    return settingsViewCppOwned(&instance);
+}
+
+static QObject* settingsViewSimpleStub(QQmlEngine*, QJSEngine*)
+{
+    static SettingsViewSimpleStub instance;
+    return settingsViewCppOwned(&instance);
+}
+
+static void registerSettingsViewQmlTypes()
+{
+    static bool registered = false;
+    if (registered) {
+        return;
+    }
+    registered = true;
+
+    qmlRegisterSingletonType<StreamingPreferences>(
+        "StreamingPreferences", 1, 0, "StreamingPreferences",
+        [](QQmlEngine*, QJSEngine*) -> QObject* {
+            return settingsViewCppOwned(StreamingPreferences::get());
+        });
+    qmlRegisterSingletonType<StreamProfileManager>(
+        "StreamProfileManager", 1, 0, "StreamProfileManager",
+        [](QQmlEngine*, QJSEngine*) -> QObject* {
+            return settingsViewCppOwned(StreamProfileManager::get());
+        });
+    qmlRegisterUncreatableType<StreamProfileEditor>(
+        "StreamProfileManager", 1, 0, "StreamProfileEditor",
+        "Editors are created by StreamProfileManager");
+    qmlRegisterSingletonType<SettingsViewSystemStub>(
+        "SystemProperties", 1, 0, "SystemProperties", settingsViewSystemStub);
+    qmlRegisterSingletonType<SettingsViewNavigationStub>(
+        "SdlGamepadKeyNavigation", 1, 0, "SdlGamepadKeyNavigation",
+        settingsViewNavigationStub);
+    qmlRegisterSingletonType<SettingsViewNetworkBuffersStub>(
+        "NetworkBuffers", 1, 0, "NetworkBuffers", settingsViewNetworkBuffersStub);
+    qmlRegisterSingletonType<SettingsViewCalibratorStub>(
+        "PyroWaveCalibrator", 1, 0, "PyroWaveCalibrator",
+        settingsViewCalibratorStub);
+    qmlRegisterSingletonType<SettingsViewSimpleStub>(
+        "ComputerManager", 1, 0, "ComputerManager", settingsViewSimpleStub);
+    qmlRegisterSingletonType<SettingsViewSimpleStub>(
+        "AutoUpdateChecker", 1, 0, "AutoUpdateChecker", settingsViewSimpleStub);
+    qmlRegisterType<SettingsViewAppModelStub>("AppModel", 1, 0, "AppModel");
+}
 
 static bool bumpExternalSettingsRevision(QSettings& settings)
 {
@@ -47,6 +210,7 @@ private slots:
     void profileLifecycle();
     void editorProfileSwitching();
     void vrrChangesMarkProfileDirty();
+    void vrrProfileMigrationAndSerialization();
     void settingsCoordinationDetectsReloadAndOwnership();
     void settingsCoordinationIndependentSnapshots();
     void settingsCoordinationReloadNotifiesAndResavesDeletedProfile();
@@ -56,11 +220,100 @@ private slots:
     void uiFramePacingPreference();
     void uiGraphicsPreference();
     void uiProfileControlsPreference();
+    void settingsViewQmlLoadsWithoutMutatingProfile_data();
+    void settingsViewQmlLoadsWithoutMutatingProfile();
+    void appViewQmlCompiles();
     void versionIdentity();
 
 private:
     QTemporaryDir m_SettingsDir;
 };
+
+void StreamProfileTests::settingsViewQmlLoadsWithoutMutatingProfile_data()
+{
+    QTest::addColumn<bool>("pyroWave");
+    QTest::newRow("stock H.264") << false;
+    QTest::newRow("saved PyroWave with VRR options") << true;
+}
+
+void StreamProfileTests::settingsViewQmlLoadsWithoutMutatingProfile()
+{
+    registerSettingsViewQmlTypes();
+
+    StreamProfileManager* manager = StreamProfileManager::get();
+    QFETCH(bool, pyroWave);
+
+    const QString host = QStringLiteral("settings-view-qml-host-%1")
+            .arg(pyroWave ? QStringLiteral("pyrowave") : QStringLiteral("h264"));
+    manager->ensureHost(host);
+
+    if (pyroWave) {
+        std::unique_ptr<StreamProfileEditor> savedEditor(
+            manager->createEditor(host, manager->activeProfileId(host), false));
+        QVERIFY(savedEditor);
+        QQmlEngine::setObjectOwnership(savedEditor.get(), QQmlEngine::CppOwnership);
+        StreamingPreferences* saved = savedEditor->settings();
+        saved->width = 2736;
+        saved->height = 1536;
+        saved->fps = 113;
+        saved->bitrateKbps = 400000;
+        saved->autoAdjustBitrate = false;
+        saved->videoCodecConfig = StreamingPreferences::VCC_FORCE_PYROWAVE;
+        saved->enableVrr = true;
+        saved->vrrLatencyMode = StreamingPreferences::VLM_LOW_LATENCY;
+        saved->smoothVrrFrameTiming = false;
+        saved->traceVrrFrames = true;
+        saved->notifyAllChanged();
+        QVERIFY(savedEditor->dirty());
+        QVERIFY2(savedEditor->save(), qPrintable(savedEditor->lastError()));
+    }
+
+    std::unique_ptr<StreamProfileEditor> editor(manager->createEditor(
+        host, manager->activeProfileId(host), false));
+    QVERIFY(editor);
+    QQmlEngine::setObjectOwnership(editor.get(), QQmlEngine::CppOwnership);
+    QVERIFY(!editor->dirty());
+
+    auto before = std::make_unique<StreamingPreferences>();
+    before->copyStreamSettingsFrom(*editor->settings());
+    QQmlEngine engine;
+    QQmlComponent component(&engine,
+        QUrl::fromLocalFile(QStringLiteral(TEST_APP_GUI_DIR "/SettingsView.qml")));
+    QVERIFY2(component.status() == QQmlComponent::Ready,
+             qPrintable(component.errorString()));
+
+    std::unique_ptr<QObject> view(component.createWithInitialProperties(
+        {{QStringLiteral("profileEditor"), QVariant::fromValue(editor.get())}}));
+    QVERIFY2(view, qPrintable(component.errorString()));
+    QCOMPARE(view->objectName(), editor->name());
+    QCoreApplication::processEvents();
+    QTRY_VERIFY(!editor->dirty());
+    QVERIFY2(!editor->dirty(), "Creating SettingsView changed the profile snapshot");
+    QVERIFY(editor->settings()->streamSettingsEqual(*before));
+
+    if (pyroWave) {
+        QCOMPARE(editor->settings()->videoCodecConfig,
+                 StreamingPreferences::VCC_FORCE_PYROWAVE);
+        QCOMPARE(editor->settings()->bitrateKbps, 400000);
+        QCOMPARE(editor->settings()->width, 2736);
+        QCOMPARE(editor->settings()->height, 1536);
+        QCOMPARE(editor->settings()->fps, 113);
+        QCOMPARE(editor->settings()->vrrLatencyMode,
+                 StreamingPreferences::VLM_LOW_LATENCY);
+        QVERIFY(!editor->settings()->smoothVrrFrameTiming);
+        QVERIFY(editor->settings()->traceVrrFrames);
+    }
+}
+
+void StreamProfileTests::appViewQmlCompiles()
+{
+    registerSettingsViewQmlTypes();
+    QQmlEngine engine;
+    QQmlComponent component(&engine,
+        QUrl::fromLocalFile(QStringLiteral(TEST_APP_GUI_DIR "/AppView.qml")));
+    QVERIFY2(component.status() == QQmlComponent::Ready,
+             qPrintable(component.errorString()));
+}
 
 void StreamProfileTests::initTestCase()
 {
@@ -299,14 +552,22 @@ void StreamProfileTests::vrrChangesMarkProfileDirty()
     QVERIFY(editor->save());
     QVERIFY(!editor->dirty());
 
-    QVERIFY(editor->settings()->setProperty("vrrSmoothness", true));
+    QVERIFY(editor->settings()->setProperty("vrrLatencyMode", StreamingPreferences::VLM_SMOOTH));
     QVERIFY(editor->dirty());
-    QVERIFY(editor->settings()->setProperty("vrrSmoothness", false));
+    QVERIFY(editor->settings()->setProperty("vrrLatencyMode", StreamingPreferences::VLM_BALANCED));
     QVERIFY(!editor->dirty());
-    QVERIFY(editor->settings()->setProperty("vrrSmoothness", true));
+    QVERIFY(editor->settings()->setProperty("vrrLatencyMode", StreamingPreferences::VLM_SMOOTH));
     QVERIFY(editor->dirty());
     QVERIFY(editor->save());
     QVERIFY(!editor->dirty());
+
+    QVERIFY(editor->settings()->setProperty("smoothVrrFrameTiming", false));
+    QVERIFY(editor->dirty());
+    QVERIFY(editor->settings()->setProperty("smoothVrrFrameTiming", true));
+    QVERIFY(!editor->dirty());
+    QVERIFY(editor->settings()->setProperty("traceVrrFrames", true));
+    QVERIFY(editor->dirty());
+    QVERIFY(editor->save());
 
     QVERIFY(editor->settings()->setProperty("fps", 120));
     QVERIFY(editor->dirty());
@@ -314,8 +575,64 @@ void StreamProfileTests::vrrChangesMarkProfileDirty()
 
     std::unique_ptr<StreamingPreferences> saved(manager->createActiveSettings(host));
     QVERIFY(saved->enableVrr);
-    QVERIFY(saved->vrrSmoothness);
+    QCOMPARE(saved->vrrLatencyMode, StreamingPreferences::VLM_SMOOTH);
+    QVERIFY(saved->smoothVrrFrameTiming);
+    QVERIFY(saved->traceVrrFrames);
     QCOMPARE(saved->fps, 120);
+}
+
+void StreamProfileTests::vrrProfileMigrationAndSerialization()
+{
+    StreamingPreferences preferences;
+    QSettings legacy(QSettings::IniFormat, QSettings::UserScope,
+                     QStringLiteral("Moonlight Profile Tests"),
+                     QStringLiteral("migration"));
+    legacy.clear();
+    legacy.setValue(QStringLiteral("vrrsmoothness"), true);
+    preferences.resetToStock();
+    preferences.loadStreamSettings(legacy);
+    QCOMPARE(preferences.vrrLatencyMode, StreamingPreferences::VLM_BALANCED);
+    QVERIFY(preferences.smoothVrrFrameTiming);
+    QVERIFY(legacy.contains(QStringLiteral("vrrsmoothness")));
+
+    legacy.clear();
+    legacy.setValue(QStringLiteral("vrrsmoothness"), false);
+    preferences.resetToStock();
+    preferences.loadStreamSettings(legacy);
+    QCOMPARE(preferences.vrrLatencyMode, StreamingPreferences::VLM_BALANCED);
+    QVERIFY(!preferences.smoothVrrFrameTiming);
+
+    legacy.clear();
+    legacy.setValue(QStringLiteral("vrrlatencyfix"), true);
+    preferences.resetToStock();
+    preferences.loadStreamSettings(legacy);
+    QCOMPARE(preferences.vrrLatencyMode,
+             StreamingPreferences::VLM_BALANCED_TARGET);
+
+    legacy.clear();
+    legacy.setValue(QStringLiteral("vrrlatencymode"),
+                    static_cast<int>(StreamingPreferences::VLM_LOW_LATENCY));
+    legacy.setValue(QStringLiteral("vrrsmoothness"), true);
+    legacy.setValue(QStringLiteral("smoothvrrframetiming"), false);
+    legacy.setValue(QStringLiteral("tracevrrframes"), true);
+    preferences.resetToStock();
+    preferences.loadStreamSettings(legacy);
+    QCOMPARE(preferences.vrrLatencyMode, StreamingPreferences::VLM_LOW_LATENCY);
+    QVERIFY(!preferences.smoothVrrFrameTiming);
+    QVERIFY(preferences.traceVrrFrames);
+
+    legacy.clear();
+    preferences.vrrLatencyMode = StreamingPreferences::VLM_BALANCED_TARGET;
+    preferences.smoothVrrFrameTiming = false;
+    preferences.traceVrrFrames = true;
+    preferences.saveStreamSettings(legacy);
+    legacy.sync();
+    QCOMPARE(legacy.value(QStringLiteral("vrrlatencymode")).toInt(),
+             static_cast<int>(StreamingPreferences::VLM_BALANCED_TARGET));
+    QVERIFY(!legacy.contains(QStringLiteral("vrrsmoothness")));
+    QVERIFY(!legacy.contains(QStringLiteral("vrrlatencyfix")));
+    QVERIFY(!legacy.value(QStringLiteral("smoothvrrframetiming")).toBool());
+    QVERIFY(legacy.value(QStringLiteral("tracevrrframes")).toBool());
 }
 
 void StreamProfileTests::settingsCoordinationDetectsReloadAndOwnership()
@@ -651,7 +968,9 @@ void StreamProfileTests::serializationAndCorruptData()
     preferences->absoluteTouchMode = false;
     preferences->framePacing = true;
     preferences->enableVrr = true;
-    preferences->vrrSmoothness = true;
+    preferences->vrrLatencyMode = StreamingPreferences::VLM_LOW_LATENCY;
+    preferences->smoothVrrFrameTiming = false;
+    preferences->traceVrrFrames = true;
     preferences->connectionWarnings = false;
     preferences->configurationWarnings = false;
     preferences->gamepadMouse = false;
@@ -664,7 +983,7 @@ void StreamProfileTests::serializationAndCorruptData()
     preferences->swapFaceButtons = true;
     preferences->keepAwake = false;
     preferences->audioConfig = StreamingPreferences::AC_71_SURROUND;
-    preferences->videoCodecConfig = StreamingPreferences::VCC_FORCE_AV1;
+    preferences->videoCodecConfig = StreamingPreferences::VCC_FORCE_PYROWAVE;
     preferences->enableHdr = true;
     preferences->enableYUV444 = true;
     preferences->videoDecoderSelection = StreamingPreferences::VDS_FORCE_HARDWARE;
@@ -676,12 +995,21 @@ void StreamProfileTests::serializationAndCorruptData()
     std::unique_ptr<StreamingPreferences> roundTrip(
         manager->createActiveSettings(host));
     QVERIFY(preferences->streamSettingsEqual(*roundTrip));
-    QVERIFY(roundTrip->vrrSmoothness);
+    QCOMPARE(roundTrip->vrrLatencyMode, StreamingPreferences::VLM_LOW_LATENCY);
+    QVERIFY(!roundTrip->smoothVrrFrameTiming);
+    QVERIFY(roundTrip->traceVrrFrames);
 
     QSettings settings;
     const QString hostKey = QString::fromLatin1(host.toUtf8().toHex());
     const QString profileRoot = QStringLiteral("streamProfiles/hosts/%1/profiles/%2")
         .arg(hostKey, editor->profileId());
+    settings.sync();
+    QCOMPARE(settings.value(profileRoot + QStringLiteral("/vrrlatencymode")).toInt(),
+             static_cast<int>(StreamingPreferences::VLM_LOW_LATENCY));
+    QVERIFY(!settings.value(profileRoot + QStringLiteral("/smoothvrrframetiming")).toBool());
+    QVERIFY(settings.value(profileRoot + QStringLiteral("/tracevrrframes")).toBool());
+    QCOMPARE(settings.value(profileRoot + QStringLiteral("/videocfg")).toInt(),
+             static_cast<int>(StreamingPreferences::VCC_FORCE_PYROWAVE));
     settings.setValue(profileRoot + QStringLiteral("/width"), -1);
     settings.setValue(QStringLiteral("streamProfiles/hosts/%1/activeProfile").arg(hostKey),
                       QStringLiteral("missing-profile"));
@@ -733,5 +1061,12 @@ void StreamProfileTests::cliOverridesAreTemporary()
     QVERIFY(persisted->enableVsync);
 }
 
-QTEST_GUILESS_MAIN(StreamProfileTests)
+int main(int argc, char** argv)
+{
+    qputenv("QT_QPA_PLATFORM", "offscreen");
+    QQuickStyle::setStyle(QStringLiteral("Basic"));
+    QGuiApplication app(argc, argv);
+    StreamProfileTests tests;
+    return QTest::qExec(&tests, argc, argv);
+}
 #include "test_streamprofiles.moc"

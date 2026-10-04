@@ -3,6 +3,7 @@ import QtQuick.Controls 2.2
 import QtQuick.Controls.Material 2.2
 import QtQuick.Layouts 1.3
 
+import StreamingPreferences 1.0
 import AppModel 1.0
 import ComputerManager 1.0
 import SdlGamepadKeyNavigation 1.0
@@ -274,26 +275,31 @@ CenteredGridView {
 
         function launchOrResumeSelectedApp(quitExistingApp)
         {
-            var runningId = appModel.getRunningAppId()
-            if (runningId !== 0 && runningId !== model.appid) {
-                if (quitExistingApp) {
-                    quitAppDialog.appName = appModel.getRunningAppName()
-                    quitAppDialog.segueToStream = true
-                    quitAppDialog.nextAppName = model.name
-                    quitAppDialog.nextAppIndex = index
-                    quitAppDialog.open()
+            var requestedAppId = model.appid
+            var requestedAppName = model.name
+            var requestedAppIndex = index
+            window.requestSettingsAccess(function() {
+                var runningId = appModel.getRunningAppId()
+                if (runningId !== 0 && runningId !== requestedAppId) {
+                    if (quitExistingApp) {
+                        quitAppDialog.appName = appModel.getRunningAppName()
+                        quitAppDialog.segueToStream = true
+                        quitAppDialog.nextAppName = requestedAppName
+                        quitAppDialog.nextAppIndex = requestedAppIndex
+                        quitAppDialog.open()
+                    }
+
+                    return
                 }
 
-                return
-            }
-
-            var component = Qt.createComponent("StreamSegue.qml")
-            var segue = component.createObject(stackView, {
-                                                   "appName": model.name,
-                                                   "session": appModel.createSessionForApp(index),
-                                                   "isResume": runningId === model.appid
-                                               })
-            stackView.push(segue)
+                var component = Qt.createComponent("StreamSegue.qml")
+                var segue = component.createObject(stackView, {
+                                                       "appName": requestedAppName,
+                                                       "session": appModel.createSessionForApp(requestedAppIndex),
+                                                       "isResume": runningId === requestedAppId
+                                                   })
+                stackView.push(segue)
+            })
         }
 
         onClicked: {
@@ -432,20 +438,21 @@ CenteredGridView {
         standardButtons: Dialog.Yes | Dialog.No
 
         function quitApp() {
-            var component = Qt.createComponent("QuitSegue.qml")
-            var params = {"appName": appName, "quitRunningAppFn": function() { appModel.quitRunningApp() }}
-            if (segueToStream) {
-                // Store the session and app name if we're going to stream after
-                // successfully quitting the old app.
-                params.nextAppName = nextAppName
-                params.nextSession = appModel.createSessionForApp(nextAppIndex)
-            }
-            else {
-                params.nextAppName = null
-                params.nextSession = null
-            }
+            window.requestSettingsAccess(function() {
+                var component = Qt.createComponent("QuitSegue.qml")
+                var params = {"appName": appName, "quitRunningAppFn": function() { appModel.quitRunningApp() }}
+                if (segueToStream) {
+                    // Build the next session after shared settings have been synchronized.
+                    params.nextAppName = nextAppName
+                    params.nextSession = appModel.createSessionForApp(nextAppIndex)
+                }
+                else {
+                    params.nextAppName = null
+                    params.nextSession = null
+                }
 
-            stackView.push(component.createObject(stackView, params))
+                stackView.push(component.createObject(stackView, params))
+            })
         }
 
         onAccepted: quitApp()

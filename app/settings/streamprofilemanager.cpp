@@ -1251,7 +1251,8 @@ StreamProfileEditor::StreamProfileEditor(StreamProfileManager* manager,
     TRACK(absoluteMouseModeChanged); TRACK(absoluteTouchModeChanged); TRACK(audioConfigChanged);
     TRACK(videoCodecConfigChanged); TRACK(enableHdrChanged); TRACK(enableYUV444Changed);
     TRACK(videoDecoderSelectionChanged); TRACK(windowModeChanged); TRACK(framePacingChanged);
-    TRACK(enableVrrChanged); TRACK(vrrSmoothnessChanged);
+    TRACK(enableVrrChanged); TRACK(vrrLatencyModeChanged);
+    TRACK(smoothVrrFrameTimingChanged); TRACK(traceVrrFramesChanged);
     TRACK(connectionWarningsChanged); TRACK(configurationWarningsChanged); TRACK(gamepadMouseChanged);
     TRACK(showPerformanceOverlayChanged); TRACK(mouseButtonsChanged); TRACK(muteOnFocusLossChanged);
     TRACK(backgroundGamepadChanged); TRACK(reverseScrollDirectionChanged); TRACK(swapFaceButtonsChanged);

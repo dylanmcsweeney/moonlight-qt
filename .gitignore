@@ -11,3 +11,23 @@ config.tests/*/Makefile
 MoonlightPortable*.zip
 MoonlightPortable*.7z
 MoonlightPortable*/
+
+# In-tree qmake output from scripts/build-fast-windows.cmd
+/.qmake.stash
+/Makefile
+/Makefile.Debug
+/Makefile.Release
+/*/.qmake.stash
+/*/Makefile
+/*/Makefile.Debug
+/*/Makefile.Release
+/*/release/
+/*/debug/
+/app/Moonlight_resource.rc
+/app/qml_qmlcache.qrc
+
+# Locally generated test executables and Python bytecode accidentally tracked
+# by older worktrees.
+/build-haptics-codex/
+__pycache__/
+*.py[cod]

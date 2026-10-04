@@ -98,8 +98,15 @@ public:
     QVector<NvDisplayMode> displayModes;
     int maxLumaPixelsHEVC;
     int serverCodecModeSupport;
+    // Optional paired-host /serverinfo extension; zero means unknown.
+    uint32_t pyrowaveHostLinkMbps = 0;
     QString gpuModel;
     bool isSupportedServerVersion;
+    // Optional /serverinfo extension; absent fields never imply integration.
+    bool frameLimiterSupported = false;
+    bool frameLimiterEnabled = false;
+    bool virtualDisplayFrameLimiterEnabled = false;
+    uint32_t frameLimiterFpsLimitMilliHz = 0;
 
     // Persisted traits
     NvAddress localAddress;

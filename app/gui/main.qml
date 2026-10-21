@@ -173,6 +173,12 @@ ApplicationWindow {
         }
 
         // Display any modal dialogs for configuration warnings
+        if (UiStartupRecovery &&
+                (UiStartupRecovery.recoveryActive ||
+                 UiStartupRecovery.safeUiActive ||
+                 UiStartupRecovery.warning.length > 0)) {
+            startupRecoveryDialog.open()
+        }
         if (runConfigChecks) {
             if (SystemProperties.isWow64) {
                 wow64Dialog.open()
@@ -1169,6 +1175,85 @@ ApplicationWindow {
         helpTextSeparator: "\n\n"
         helpText: qsTr("Click the Help button for information on how to map your gamepads.")
         helpUrl: "https://github.com/moonlight-stream/moonlight-docs/wiki/Gamepad-Mapping"
+    }
+
+    NavigableDialog {
+        id: startupRecoveryDialog
+        property bool restartFailed: false
+        title: qsTr("Safe Startup Recovery")
+        modal: true
+        onOpened: startupRecoveryDialog.restartFailed = false
+
+        ColumnLayout {
+            width: 520
+            spacing: 12
+
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                text: UiStartupRecovery.warning.length > 0 &&
+                      !UiStartupRecovery.recoveryActive &&
+                      !UiStartupRecovery.safeUiActive ?
+                    UiStartupRecovery.warning :
+                    UiStartupRecovery.recoveryActive ?
+                    qsTr("Moonlight recovered from a startup that did not finish with the saved GUI renderer. It is using Direct3D 11 for this launch. Your saved renderer preference is still %1.")
+                        .arg(UiRendererManager.savedBackend === StreamingPreferences.UI_GRAPHICS_D3D12 ? qsTr("Direct3D 12") : qsTr("your previous choice")) :
+                    qsTr("Moonlight was started with Safe Startup. It is using Direct3D 11 for this launch and has not changed your saved renderer preference.")
+            }
+
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                text: UiStartupRecovery.statusMessage
+                visible: UiStartupRecovery.statusMessage.length > 0
+            }
+
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                color: "#ff8080"
+                visible: startupRecoveryDialog.restartFailed ||
+                         UiRendererManager.recoveryError.length > 0
+                text: UiRendererManager.recoveryError.length > 0 ?
+                          UiRendererManager.recoveryError :
+                          qsTr("Moonlight could not start the requested renderer. Recovery remains active.")
+            }
+        }
+
+        footer: DialogButtonBox {
+            Button {
+                visible: UiStartupRecovery.recoveryActive ||
+                         (UiStartupRecovery.warning.length > 0 &&
+                          UiStartupRecovery.effectiveBackend === StreamingPreferences.UI_GRAPHICS_D3D11)
+                text: qsTr("Keep using Direct3D 11")
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+                onClicked: {
+                    window.requestSettingsAccess(function() {
+                        if (UiRendererManager.keepUsingD3D11()) {
+                            startupRecoveryDialog.close()
+                        } else {
+                            window.showSettingsError(
+                                UiRendererManager.recoveryError)
+                        }
+                    })
+                }
+            }
+            Button {
+                text: UiStartupRecovery.safeUiActive ?
+                          qsTr("Return to saved renderer") :
+                          qsTr("Retry saved renderer")
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+                onClicked: {
+                    startupRecoveryDialog.restartFailed =
+                        !UiRendererManager.retryPreferredBackend()
+                }
+            }
+            Button {
+                text: qsTr("Continue")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+                onClicked: startupRecoveryDialog.close()
+            }
+        }
     }
 
     NavigableDialog {

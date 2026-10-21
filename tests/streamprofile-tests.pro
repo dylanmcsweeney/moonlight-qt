@@ -9,6 +9,8 @@ DEFINES += TEST_APP_GUI_DIR=\\\"$$PWD/../app/gui\\\"
 
 INCLUDEPATH += ../app
 
+win32: LIBS += -ldxgi
+
 SOURCES += \
     test_streamprofiles.cpp \
     wm_stubs.cpp \
@@ -18,6 +20,8 @@ SOURCES += \
     ../app/settings/buildidentity.cpp \
     ../app/settings/streamingpreferences.cpp \
     ../app/settings/streamprofilemanager.cpp \
+    ../app/settings/uistartuprecovery.cpp \
+    ../app/gui/uirenderermanager.cpp \
     ../app/streaming/vrrratepolicy.cpp
 
 HEADERS += \
@@ -26,6 +30,8 @@ HEADERS += \
     ../app/settings/buildidentity.h \
     ../app/settings/streamingpreferences.h \
     ../app/settings/streamprofilemanager.h \
+    ../app/settings/uistartuprecovery.h \
+    ../app/gui/uirenderermanager.h \
     ../app/streaming/vrrratepolicy.h
 
 RESOURCES += tests.qrc

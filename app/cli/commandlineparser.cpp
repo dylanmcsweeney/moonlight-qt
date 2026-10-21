@@ -12,6 +12,15 @@ static bool inRange(int value, int min, int max)
     return value >= min && value <= max;
 }
 
+QStringList removeTransientUiStartupOptions(QStringList arguments)
+{
+    arguments.removeAll(QStringLiteral("--safe-ui"));
+    arguments.removeAll(QStringLiteral("-safe-ui"));
+    arguments.removeAll(QStringLiteral("--retry-ui"));
+    arguments.removeAll(QStringLiteral("-retry-ui"));
+    return arguments;
+}
+
 // This method returns key's value from QMap where the key is a QString.
 // Key matching is case insensitive.
 template <typename T>
@@ -39,6 +48,10 @@ public:
         addHelpOption();
         addVersionOption();
         addOption(QCommandLineOption("haptics-license", "Print haptics component notices, licenses and covered source (use alone)."));
+        addOption(QCommandLineOption("safe-ui", "Start the graphical interface with Direct3D 11 (Windows only)."));
+        // Used only by the recovery dialog. The child process clears a stale
+        // recovery latch as it begins the explicitly requested retry.
+        addOption(QCommandLineOption("retry-ui"));
     }
 
     void handleHelpAndVersionOptions()
@@ -167,6 +180,8 @@ GlobalCommandLineParser::ParseResult GlobalCommandLineParser::parse(const QStrin
     );
     parser.addPositionalArgument("action", "Action to execute", "<action>");
     parser.parse(args);
+    m_SafeUiRequested = parser.isSet("safe-ui");
+    m_PreferredUiRetryRequested = parser.isSet("retry-ui");
     auto posArgs = parser.positionalArguments();
 
     if (posArgs.isEmpty()) {

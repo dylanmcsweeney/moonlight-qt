@@ -191,6 +191,7 @@ SOURCES += \
     settings/compatfetcher.cpp \
     settings/mappingfetcher.cpp \
     settings/streamingpreferences.cpp \
+    settings/uistartuprecovery.cpp \
     settings/streamprofilemanager.cpp \
     settings/buildidentity.cpp \
     diagnostics/diagnosticcapture.cpp \
@@ -250,6 +251,7 @@ HEADERS += \
     cli/quitstream.h \
     cli/startstream.h \
     settings/streamingpreferences.h \
+    settings/uistartuprecovery.h \
     settings/streamprofilemanager.h \
     settings/buildidentity.h \
     diagnostics/diagnosticcapture.h \

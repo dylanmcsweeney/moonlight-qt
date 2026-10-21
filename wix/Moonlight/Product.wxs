@@ -40,6 +40,12 @@
                 Target="[#MoonlightExe]"
                 Directory="ApplicationProgramsFolder"
                 WorkingDirectory="INSTALLFOLDER" />
+      <Shortcut Id="SafeStartupShortcut"
+                Name="Moonlight Safe Startup"
+                Description="Start Moonlight with Direct3D 11 for startup recovery"
+                Target="[#MoonlightSafeStartupCmd]"
+                Directory="ApplicationProgramsFolder"
+                WorkingDirectory="INSTALLFOLDER" />
       <RemoveFolder Id="CleanupStartMenuShortcut"
                     Directory="ApplicationProgramsFolder"
                     On="uninstall" />
@@ -95,6 +101,8 @@
                                   IgnoreFailure="yes"
                                   Name="$(var.FullName)" />
         </File>
+        <File Id="MoonlightSafeStartupCmd"
+              Source="$(var.BuildDir)\Moonlight Safe Startup.cmd" />
       </Component>
     </DirectoryRef>
 

@@ -1,6 +1,8 @@
 #include "uirenderermanager.h"
 
+#include "settings/uistartuprecovery.h"
 #include "settings/streamingpreferences.h"
+#include "cli/commandlineparser.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -8,6 +10,7 @@
 #include <QProcessEnvironment>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
+#include <QTimer>
 #include <QtDebug>
 
 #include <utility>
@@ -177,14 +180,34 @@ bool inspectD3D12Adapter(ID3D12Device* device, QString& name,
 }
 
 UiRendererManager::UiRendererManager(StreamingPreferences* preferences,
+                                     UiStartupRecovery* startupRecovery,
                                      QObject* parent)
     : QObject(parent),
       m_Preferences(preferences),
+      m_StartupRecovery(startupRecovery),
       m_InspectionComplete(false),
       m_RendererReady(false),
-      m_SoftwareRenderer(false)
+      m_SoftwareRenderer(false),
+      m_HasPresentedFrame(false),
+      m_StartupHeartbeatTimer(new QTimer(this))
 {
     Q_ASSERT(m_Preferences);
+    Q_ASSERT(m_StartupRecovery);
+    connect(m_Preferences, &StreamingPreferences::uiGraphicsBackendChanged,
+            this, &UiRendererManager::rendererChanged);
+    m_StartupHeartbeatTimer->setInterval(100);
+    connect(m_StartupHeartbeatTimer, &QTimer::timeout, this, [this]() {
+        if (m_LastUiHeartbeat.elapsed() > 750) {
+            m_ResponsiveSince.restart();
+        }
+        m_LastUiHeartbeat.restart();
+        if (m_ResponsiveSince.elapsed() >= 3000) {
+            m_StartupHeartbeatTimer->stop();
+            m_StartupRecovery->stage(QStringLiteral("responsive-grace"));
+            m_StartupRecovery->markHealthy();
+            m_StartupRecovery->stage(QStringLiteral("healthy"));
+        }
+    });
 }
 
 void UiRendererManager::configureGraphicsBackend(
@@ -279,6 +302,16 @@ void UiRendererManager::setWindow(QQuickWindow* window)
     connect(m_Window, &QQuickWindow::beforeRendering, this,
             [this, window]() { inspectRenderer(window); },
             Qt::DirectConnection);
+    connect(m_Window, &QQuickWindow::frameSwapped, this, [this]() {
+        if (m_HasPresentedFrame) {
+            return;
+        }
+        m_HasPresentedFrame = true;
+        m_StartupRecovery->stage(QStringLiteral("first-frame"));
+        m_LastUiHeartbeat.start();
+        m_ResponsiveSince.start();
+        m_StartupHeartbeatTimer->start();
+    });
     connect(m_Window, &QObject::destroyed, this, [this]() {
         m_Window = nullptr;
     });
@@ -306,11 +339,22 @@ bool UiRendererManager::softwareRenderer() const
     return m_SoftwareRenderer;
 }
 
+int UiRendererManager::savedBackend() const
+{
+    return m_Preferences->uiGraphicsBackend;
+}
+
+QString UiRendererManager::recoveryError() const
+{
+    return m_RecoveryError;
+}
+
 bool UiRendererManager::restartApplication()
 {
     QProcess process;
     process.setProgram(QCoreApplication::applicationFilePath());
-    process.setArguments(QCoreApplication::arguments().mid(1));
+    process.setArguments(removeTransientUiStartupOptions(
+        QCoreApplication::arguments().mid(1)));
     process.setWorkingDirectory(QDir::currentPath());
 
     QProcessEnvironment environment =
@@ -321,6 +365,55 @@ bool UiRendererManager::restartApplication()
 
     if (!process.startDetached()) {
         qWarning() << "Unable to restart application";
+        return false;
+    }
+
+    QCoreApplication::quit();
+    return true;
+}
+
+bool UiRendererManager::keepUsingD3D11()
+{
+    const auto oldBackend = m_Preferences->uiGraphicsBackend;
+    m_Preferences->uiGraphicsBackend = StreamingPreferences::UI_GRAPHICS_D3D11;
+    if (!m_Preferences->save()) {
+        m_Preferences->uiGraphicsBackend = oldBackend;
+        m_RecoveryError = QStringLiteral("Moonlight could not save the Direct3D 11 preference.");
+        emit recoveryErrorChanged();
+        return false;
+    }
+
+    if (!m_StartupRecovery->clearRecoveryForSavedBackend(
+                StreamingPreferences::UI_GRAPHICS_D3D11)) {
+        m_RecoveryError = m_StartupRecovery->warning().isEmpty() ?
+            QStringLiteral("The Direct3D 11 preference was saved, but the recovery state could not be cleared.") :
+            m_StartupRecovery->warning();
+        emit recoveryErrorChanged();
+        return false;
+    }
+
+    m_RecoveryError.clear();
+    emit recoveryErrorChanged();
+    emit rendererChanged();
+    return true;
+}
+
+bool UiRendererManager::retryPreferredBackend()
+{
+    QProcess process;
+    process.setProgram(QCoreApplication::applicationFilePath());
+    process.setArguments({QStringLiteral("--retry-ui")});
+    process.setWorkingDirectory(QDir::currentPath());
+
+    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    environment.remove(QStringLiteral("QSG_RHI_BACKEND"));
+    environment.remove(QStringLiteral("QT_D3D_NO_FLIP"));
+    environment.remove(QStringLiteral("QT_QUICK_BACKEND"));
+    process.setProcessEnvironment(environment);
+
+    if (!process.startDetached()) {
+        m_RecoveryError = QStringLiteral("Moonlight could not start the preferred renderer retry.");
+        emit recoveryErrorChanged();
         return false;
     }
 
@@ -339,12 +432,16 @@ bool UiRendererManager::restartWithGraphicsConfiguration(
         return false;
     }
 
+    const auto oldBackend = m_Preferences->uiGraphicsBackend;
+    const auto oldSwapchainMode = m_Preferences->uiD3D11SwapchainMode;
     m_Preferences->uiGraphicsBackend =
         static_cast<StreamingPreferences::UIGraphicsBackend>(backend);
     m_Preferences->uiD3D11SwapchainMode =
         static_cast<StreamingPreferences::UID3D11SwapchainMode>(
             d3d11SwapchainMode);
     if (!m_Preferences->save()) {
+        m_Preferences->uiGraphicsBackend = oldBackend;
+        m_Preferences->uiD3D11SwapchainMode = oldSwapchainMode;
         qWarning() << "Unable to persist the selected graphics configuration; restart cancelled";
         return false;
     }
@@ -406,6 +503,19 @@ void UiRendererManager::updateRenderer(QString backend,
     qInfo() << "Qt Quick renderer:" << m_ActualBackend
             << "adapter:" << m_AdapterName
             << "software:" << m_SoftwareRenderer;
+    int actualBackend = UiStartupRecovery::Automatic;
+    if (m_ActualBackend == QStringLiteral("Direct3D 12")) {
+        actualBackend = UiStartupRecovery::Direct3D12;
+    }
+    else if (m_ActualBackend == QStringLiteral("Direct3D 11")) {
+        actualBackend = UiStartupRecovery::Direct3D11;
+    }
+    else if (m_ActualBackend == QStringLiteral("OpenGL")) {
+        actualBackend = UiStartupRecovery::OpenGL;
+    }
+    m_StartupRecovery->recordActualBackend(actualBackend);
+    m_StartupRecovery->stage(QStringLiteral("renderer-identified-%1")
+                             .arg(m_ActualBackend));
 
     if (isD3D12 && m_SoftwareRenderer) {
         emit softwareD3D12Detected(m_AdapterName);

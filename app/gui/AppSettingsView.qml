@@ -106,6 +106,30 @@ Flickable {
         })
     }
 
+    function requestKeepUsingD3D11() {
+        window.requestSettingsAccess(function() {
+            if (appPreferencesDirty ||
+                    StreamProfileManager.localSettingsDirty) {
+                closeAction = "keep-d3d11"
+                unsavedAppSettingsDialog.open()
+            } else if (!UiRendererManager.keepUsingD3D11()) {
+                window.showSettingsError(UiRendererManager.recoveryError)
+            }
+        })
+    }
+
+    function requestPreferredRendererRetry() {
+        window.requestSettingsAccess(function() {
+            if (appPreferencesDirty ||
+                    StreamProfileManager.localSettingsDirty) {
+                closeAction = "retry-preferred"
+                unsavedAppSettingsDialog.open()
+            } else if (!UiRendererManager.retryPreferredBackend()) {
+                window.showSettingsError(UiRendererManager.recoveryError)
+            }
+        })
+    }
+
     function requestClose() {
         if (appPreferencesDirty || StreamProfileManager.localSettingsDirty) {
             closeAction = "back"
@@ -136,6 +160,16 @@ Flickable {
         } else if (closeAction === "template") {
             openTemplateEditor()
             closeAction = "back"
+        } else if (closeAction === "keep-d3d11") {
+            closeAction = "back"
+            if (!UiRendererManager.keepUsingD3D11()) {
+                window.showSettingsError(UiRendererManager.recoveryError)
+            }
+        } else if (closeAction === "retry-preferred") {
+            closeAction = "back"
+            if (!UiRendererManager.retryPreferredBackend()) {
+                window.showSettingsError(UiRendererManager.recoveryError)
+            }
         } else {
             stackView.pop()
         }
@@ -412,6 +446,58 @@ Flickable {
                                   .arg(UiRendererManager.adapterName) :
                               qsTr("Active GUI renderer: %1")
                                   .arg(UiRendererManager.actualBackend)
+                }
+
+                Label {
+                    visible: uiGraphicsBackendComboBox.visible
+                    width: parent.width
+                    wrapMode: Text.Wrap
+                    text: qsTr("Saved GUI renderer: %1")
+                        .arg(UiRendererManager.savedBackend === StreamingPreferences.UI_GRAPHICS_D3D12 ? qsTr("Direct3D 12") :
+                             UiRendererManager.savedBackend === StreamingPreferences.UI_GRAPHICS_D3D11 ? qsTr("Direct3D 11") :
+                             UiRendererManager.savedBackend === StreamingPreferences.UI_GRAPHICS_OPENGL ? qsTr("OpenGL") :
+                             qsTr("Automatic"))
+                }
+
+                Label {
+                    visible: UiStartupRecovery.recoveryActive ||
+                             UiStartupRecovery.safeUiActive ||
+                             UiStartupRecovery.warning.length > 0
+                    width: parent.width
+                    wrapMode: Text.Wrap
+                    color: "#ffcc80"
+                    text: UiStartupRecovery.warning.length > 0 &&
+                          !UiStartupRecovery.recoveryActive &&
+                          !UiStartupRecovery.safeUiActive ?
+                              UiStartupRecovery.warning :
+                          UiStartupRecovery.recoveryActive ?
+                              qsTr("Startup recovery is using Direct3D 11. The saved renderer remains unchanged until you choose an action.") :
+                              qsTr("Safe Startup is using Direct3D 11 for this launch. The saved renderer remains unchanged.")
+                }
+
+                Label {
+                    visible: UiRendererManager.recoveryError.length > 0
+                    width: parent.width
+                    wrapMode: Text.Wrap
+                    color: "#ff8080"
+                    text: UiRendererManager.recoveryError
+                }
+
+                RowLayout {
+                    visible: UiStartupRecovery.recoveryActive ||
+                             UiStartupRecovery.safeUiActive ||
+                             UiStartupRecovery.warning.length > 0
+                    Button {
+                        visible: UiStartupRecovery.recoveryActive ||
+                                 (UiStartupRecovery.warning.length > 0 &&
+                                  UiStartupRecovery.effectiveBackend === StreamingPreferences.UI_GRAPHICS_D3D11)
+                        text: qsTr("Keep using Direct3D 11")
+                        onClicked: appSettings.requestKeepUsingD3D11()
+                    }
+                    Button {
+                        text: qsTr("Retry saved renderer")
+                        onClicked: appSettings.requestPreferredRendererRetry()
+                    }
                 }
 
                 Label {

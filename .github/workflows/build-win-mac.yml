@@ -88,6 +88,8 @@ jobs:
         run: |
           set "PATH=%QT_PATH%;%PATH%"
           build\build-x64-release\tests\release\streamprofile-tests.exe
+          if errorlevel 1 exit /b 1
+          build\build-x64-release\tests\startup\release\tst_uistartuprecovery.exe
         env:
           QT_PATH: ${{ runner.workspace }}\Qt\${{ matrix.qt_version }}\msvc2022_64\bin
 
@@ -210,7 +212,9 @@ jobs:
 
       - name: Run profile tests (macOS)
         if: runner.os == 'macOS'
-        run: build/build-Release/tests/streamprofile-tests
+        run: |
+          build/build-Release/tests/streamprofile-tests
+          build/build-Release/tests/startup/tst_uistartuprecovery
 
       - name: Stage Windows installer bundle
         if: runner.os == 'Windows'

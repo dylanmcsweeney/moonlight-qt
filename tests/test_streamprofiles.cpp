@@ -3,11 +3,18 @@
 #include "cli/commandlineparser.h"
 #include "settings/buildidentity.h"
 #include "settings/streamprofilemanager.h"
+#include "settings/streamingpreferences.h"
+#include "settings/uistartuprecovery.h"
+#include "gui/uirenderermanager.h"
 
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QGuiApplication>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QDir>
+#include <QFile>
 #include <QSettings>
 #include <QFileInfo>
 #include <QLockFile>
@@ -15,6 +22,7 @@
 #include <QSize>
 #include <QTemporaryDir>
 #include <QVariantList>
+#include <QQuickWindow>
 #include <QtQuickControls2/QQuickStyle>
 
 #include <memory>
@@ -200,6 +208,24 @@ static bool reloadTestSnapshot(StreamProfileManager* manager)
         .value(QStringLiteral("error")).toString().isEmpty();
 }
 
+static int pendingUiStartupAttempts(const QString& settingsDirectory)
+{
+    QFile stateFile(QDir(settingsDirectory).filePath(
+        QStringLiteral("ui-startup-recovery/state.json")));
+    if (!stateFile.open(QIODevice::ReadOnly)) {
+        return -1;
+    }
+    QJsonParseError parseError;
+    const QJsonDocument document =
+        QJsonDocument::fromJson(stateFile.readAll(), &parseError);
+    if (parseError.error != QJsonParseError::NoError ||
+            !document.isObject() ||
+            !document.object().value(QStringLiteral("attempts")).isArray()) {
+        return -1;
+    }
+    return document.object().value(QStringLiteral("attempts")).toArray().size();
+}
+
 class StreamProfileTests : public QObject
 {
     Q_OBJECT
@@ -217,6 +243,9 @@ private slots:
     void settingsCoordinationLockFailureDoesNotAdvanceRevision();
     void serializationAndCorruptData();
     void cliOverridesAreTemporary();
+    void safeUiFlagIsAcceptedForNormalAndStreamLaunches();
+    void transientUiFlagsAreRemovedForRestart();
+    void uiRendererNeedsPresentedFrameAndResponsiveGrace();
     void uiFramePacingPreference();
     void uiGraphicsPreference();
     void uiProfileControlsPreference();
@@ -1045,7 +1074,8 @@ void StreamProfileTests::cliOverridesAreTemporary()
                   QStringLiteral("cli-host"), QStringLiteral("Desktop"),
                   QStringLiteral("--resolution"), QStringLiteral("1920x1080"),
                   QStringLiteral("--fps"), QStringLiteral("120"),
-                  QStringLiteral("--no-vsync")},
+                  QStringLiteral("--no-vsync"),
+                  QStringLiteral("--safe-ui")},
                  session.get());
 
     QCOMPARE(session->width, 1920);
@@ -1061,9 +1091,83 @@ void StreamProfileTests::cliOverridesAreTemporary()
     QVERIFY(persisted->enableVsync);
 }
 
+void StreamProfileTests::safeUiFlagIsAcceptedForNormalAndStreamLaunches()
+{
+    GlobalCommandLineParser normalParser;
+    QCOMPARE(normalParser.parse({QStringLiteral("moonlight"),
+                                 QStringLiteral("--safe-ui")}),
+             GlobalCommandLineParser::NormalStartRequested);
+    QVERIFY(normalParser.isSafeUiRequested());
+
+    GlobalCommandLineParser streamParser;
+    QCOMPARE(streamParser.parse({QStringLiteral("moonlight"),
+                                 QStringLiteral("stream"),
+                                 QStringLiteral("host"),
+                                 QStringLiteral("Desktop"),
+                                 QStringLiteral("--safe-ui")}),
+             GlobalCommandLineParser::StreamRequested);
+    QVERIFY(streamParser.isSafeUiRequested());
+
+    GlobalCommandLineParser retryParser;
+    QCOMPARE(retryParser.parse({QStringLiteral("moonlight"),
+                                QStringLiteral("--retry-ui")}),
+             GlobalCommandLineParser::NormalStartRequested);
+    QVERIFY(retryParser.isPreferredUiRetryRequested());
+}
+
+void StreamProfileTests::transientUiFlagsAreRemovedForRestart()
+{
+    const QStringList original = {
+        QStringLiteral("--safe-ui"), QStringLiteral("-safe-ui"),
+        QStringLiteral("--retry-ui"), QStringLiteral("-retry-ui"),
+        QStringLiteral("--windowed"), QStringLiteral("--safe-ui")
+    };
+    QCOMPARE(removeTransientUiStartupOptions(original),
+             QStringList({QStringLiteral("--windowed")}));
+}
+
+void StreamProfileTests::uiRendererNeedsPresentedFrameAndResponsiveGrace()
+{
+    const QString settingsDirectory = m_SettingsDir.filePath(
+        QStringLiteral("renderer-health-test"));
+    QVERIFY(QDir().mkpath(settingsDirectory));
+
+    UiStartupRecovery firstAttempt(
+        settingsDirectory, UiStartupRecovery::Direct3D12, true);
+    QVERIFY(!firstAttempt.recoveryActive());
+    QCOMPARE(pendingUiStartupAttempts(settingsDirectory), 1);
+
+    // A second live process must not interpret the first process's lock as an
+    // abandoned startup, and both attempts should remain independently tracked.
+    UiStartupRecovery concurrentAttempt(
+        settingsDirectory, UiStartupRecovery::Direct3D12, true);
+    QVERIFY(!concurrentAttempt.recoveryActive());
+    QCOMPARE(pendingUiStartupAttempts(settingsDirectory), 2);
+    concurrentAttempt.finishCleanly();
+    QCOMPARE(pendingUiStartupAttempts(settingsDirectory), 1);
+
+    UiRendererManager renderer(StreamingPreferences::get(), &firstAttempt);
+    QQuickWindow window;
+    window.resize(320, 240);
+    renderer.setWindow(&window);
+    window.show();
+
+    QTRY_VERIFY_WITH_TIMEOUT(renderer.rendererReady(), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!renderer.actualBackend().isEmpty(), 5000);
+    QCOMPARE(pendingUiStartupAttempts(settingsDirectory), 1);
+
+    // This can complete only through frameSwapped followed by the manager's
+    // continuous main-loop grace period; rendererReady alone is insufficient.
+    QTRY_COMPARE_WITH_TIMEOUT(
+        pendingUiStartupAttempts(settingsDirectory), 0, 7000);
+    QVERIFY(!firstAttempt.statusMessage().isEmpty());
+    window.close();
+}
+
 int main(int argc, char** argv)
 {
     qputenv("QT_QPA_PLATFORM", "offscreen");
+    qputenv("QT_QUICK_BACKEND", "software");
     QQuickStyle::setStyle(QStringLiteral("Basic"));
     QGuiApplication app(argc, argv);
     StreamProfileTests tests;

@@ -16,6 +16,10 @@
 #include <QTemporaryFile>
 #include <QRegularExpression>
 #include <QSslSocket>
+#include <QStandardPaths>
+#include <QSettings>
+#include <QFileInfo>
+#include <memory>
 
 #ifdef Q_OS_UNIX
 #include <sys/socket.h>
@@ -60,6 +64,7 @@
 #include "streaming/session.h"
 #include "settings/streamingpreferences.h"
 #include "settings/streamprofilemanager.h"
+#include "settings/uistartuprecovery.h"
 #include "streaming/video/pyrowave/pyrowavecalibrator.h"
 #include "backend/networkbuffers.h"
 #include "gui/sdlgamepadkeynavigation.h"
@@ -467,6 +472,37 @@ static void configureTlsBackend()
 #endif
 }
 
+static QString startupRecoverySettingsDirectory()
+{
+    QSettings settings;
+    if (settings.format() == QSettings::IniFormat &&
+            !settings.fileName().isEmpty()) {
+        return QFileInfo(settings.fileName()).absolutePath();
+    }
+
+    QString path = QStandardPaths::writableLocation(
+        QStandardPaths::AppConfigLocation);
+    if (path.isEmpty()) {
+        path = QDir::homePath() + QStringLiteral("/.config/Moonlight");
+    }
+    return path;
+}
+
+static int graphicsBackendFromEnvironment()
+{
+    if (qgetenv("QT_QUICK_BACKEND").compare("software", Qt::CaseInsensitive) == 0) {
+        return StreamingPreferences::UI_GRAPHICS_AUTOMATIC;
+    }
+    if (!qEnvironmentVariableIsSet("QSG_RHI_BACKEND")) {
+        return -1;
+    }
+    const QByteArray backend = qgetenv("QSG_RHI_BACKEND").toLower();
+    if (backend == "d3d12") return StreamingPreferences::UI_GRAPHICS_D3D12;
+    if (backend == "d3d11") return StreamingPreferences::UI_GRAPHICS_D3D11;
+    if (backend == "opengl") return StreamingPreferences::UI_GRAPHICS_OPENGL;
+    return StreamingPreferences::UI_GRAPHICS_AUTOMATIC;
+}
+
 int main(int argc, char *argv[])
 {
     // Available headlessly from every package; includes the exact covered source.
@@ -506,17 +542,35 @@ int main(int argc, char *argv[])
         Path::initialize(false);
     }
 
+#ifdef Q_OS_WIN32
+    // Attach before command-line parsing so help and version output from this
+    // GUI-subsystem executable reaches a parent console.
+    HANDLE oldConOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    HANDLE oldConErr = GetStdHandle(STD_ERROR_HANDLE);
+    if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+        if (IS_UNSPECIFIED_HANDLE(oldConOut)) {
+            FILE* fp;
+            if (freopen_s(&fp, "CONOUT$", "w", stdout) == 0) {
+                setvbuf(fp, NULL, _IONBF, 0);
+            } else {
+                freopen_s(&fp, "NUL", "w", stdout);
+            }
+        }
+        if (IS_UNSPECIFIED_HANDLE(oldConErr)) {
+            FILE* fp;
+            if (freopen_s(&fp, "CONOUT$", "w", stderr) == 0) {
+                setvbuf(fp, NULL, _IONBF, 0);
+            } else {
+                freopen_s(&fp, "NUL", "w", stderr);
+            }
+        }
+    }
+#endif
 
     // Override the default QML cache directory with the one we chose
     if (qEnvironmentVariableIsEmpty("QML_DISK_CACHE_PATH")) {
         qputenv("QML_DISK_CACHE_PATH", Path::getQmlCacheDir().toUtf8());
     }
-
-#ifdef Q_OS_WIN32
-    // Grab the original std handles before we potentially redirect them later
-    HANDLE oldConOut = GetStdHandle(STD_OUTPUT_HANDLE);
-    HANDLE oldConErr = GetStdHandle(STD_ERROR_HANDLE);
-#endif
 
 #ifdef LOG_TO_FILE
     QDir tempDir(Path::getLogDir());
@@ -831,12 +885,95 @@ int main(int argc, char *argv[])
         SDL_SetHint("SDL_VIDEO_WAYLAND_MODE_SCALING", "aspect");
     }
 
+    qInfo() << "Startup milestone: before QGuiApplication construction at"
+            << s_LoggerTime.elapsed() << "ms";
     QGuiApplication app(argc, argv);
+    qInfo() << "Startup milestone: QGuiApplication constructed at"
+            << s_LoggerTime.elapsed() << "ms";
 
-    // Establish the per-process settings snapshot before global preferences
-    // are loaded or saved.
+    // Keep Qt's own argument handling intact. Parse Moonlight's arguments only
+    // after QGuiApplication has removed its platform and style options.
+    GlobalCommandLineParser globalParser;
+    const GlobalCommandLineParser::ParseResult commandLineParserResult =
+        globalParser.parse(app.arguments());
+
+    // Action parsers may print help/errors and call exit(). Validate them
+    // before arming recovery so those intentional exits never look like a
+    // failed graphical startup.
+    switch (commandLineParserResult) {
+    case GlobalCommandLineParser::StreamRequested: {
+        StreamingPreferences commandLineDefaults;
+        StreamCommandLineParser parser;
+        parser.parse(app.arguments(), &commandLineDefaults);
+        break;
+    }
+    case GlobalCommandLineParser::QuitRequested: {
+        QuitCommandLineParser parser;
+        parser.parse(app.arguments());
+        break;
+    }
+    case GlobalCommandLineParser::PairRequested: {
+        PairCommandLineParser parser;
+        parser.parse(app.arguments());
+        break;
+    }
+    case GlobalCommandLineParser::ListRequested: {
+        ListCommandLineParser parser;
+        parser.parse(app.arguments());
+        break;
+    }
+    case GlobalCommandLineParser::NormalStartRequested:
+        break;
+    }
+
+    const QString platformName = QGuiApplication::platformName().toLower();
+    const bool headlessPlatform = platformName.startsWith(QStringLiteral("offscreen")) ||
+        platformName.startsWith(QStringLiteral("minimal")) ||
+        platformName.startsWith(QStringLiteral("vnc"));
+    const bool hasGuiAction = commandLineParserResult !=
+        GlobalCommandLineParser::ListRequested && !headlessPlatform;
+    const bool safeUiRequested = globalParser.isSafeUiRequested();
+    const bool retryUiRequested = globalParser.isPreferredUiRetryRequested();
+
+    // Load the coordinated application snapshot before reading any shared
+    // preference. This keeps startup recovery aligned with the same locked
+    // snapshot used by the UI and avoids journaling a failed settings load.
     if (!StreamProfileManager::get()->isReady()) {
         return 1;
+    }
+    StreamingPreferences* preferences = StreamingPreferences::get();
+    std::unique_ptr<UiStartupRecovery> startupRecovery =
+        std::make_unique<UiStartupRecovery>(
+            startupRecoverySettingsDirectory(), preferences->uiGraphicsBackend,
+            hasGuiAction,
+#ifdef Q_OS_WIN32
+            safeUiRequested && hasGuiAction,
+#else
+            false,
+#endif
+            graphicsBackendFromEnvironment(),
+            retryUiRequested && hasGuiAction &&
+                commandLineParserResult ==
+                    GlobalCommandLineParser::NormalStartRequested);
+    if (hasGuiAction) {
+        startupRecovery->stage(QStringLiteral("qt-initialized"));
+        QObject::connect(&app, &QCoreApplication::aboutToQuit,
+                         startupRecovery.get(),
+                         &UiStartupRecovery::finishCleanly);
+    }
+
+#ifdef Q_OS_WIN32
+    if (hasGuiAction && startupRecovery->effectiveBackend() ==
+            StreamingPreferences::UI_GRAPHICS_D3D11) {
+        // Per-process Qt override; this does not alter the shared
+        // application settings snapshot or saved renderer preference.
+        qputenv("QSG_RHI_BACKEND", "d3d11");
+        qunsetenv("QT_QUICK_BACKEND");
+    }
+#endif
+
+    if (startupRecovery) {
+        startupRecovery->stage(QStringLiteral("preferences-loaded"));
     }
     configureTlsBackend();
 
@@ -858,38 +995,6 @@ int main(int argc, char *argv[])
     configureSignalHandlers();
 #endif
 
-#ifdef Q_OS_WIN32
-    // If we don't have stdout or stderr handles (which will normally be the case
-    // since we're a /SUBSYSTEM:WINDOWS app), attach to our parent console and use
-    // that for stdout and stderr.
-    //
-    // If we do have stdout or stderr handles, that means the user has used standard
-    // handle redirection. In that case, we don't want to override those handles.
-    if (AttachConsole(ATTACH_PARENT_PROCESS)) {
-        // If we didn't have an old stdout/stderr handle, use the new CONOUT$ handle
-        if (IS_UNSPECIFIED_HANDLE(oldConOut)) {
-            FILE* fp;
-            if (freopen_s(&fp, "CONOUT$", "w", stdout) == 0) {
-                setvbuf(fp, NULL, _IONBF, 0);
-            }
-            else {
-                freopen_s(&fp, "NUL", "w", stdout);
-            }
-        }
-        if (IS_UNSPECIFIED_HANDLE(oldConErr)) {
-            FILE* fp;
-            if (freopen_s(&fp, "CONOUT$", "w", stderr) == 0) {
-                setvbuf(fp, NULL, _IONBF, 0);
-            }
-            else {
-                freopen_s(&fp, "NUL", "w", stderr);
-            }
-        }
-    }
-#endif
-
-    GlobalCommandLineParser parser;
-    GlobalCommandLineParser::ParseResult commandLineParserResult = parser.parse(app.arguments());
     switch (commandLineParserResult) {
     case GlobalCommandLineParser::ListRequested:
         // Don't log to the console since it will jumble the command output
@@ -945,6 +1050,9 @@ int main(int argc, char *argv[])
     StreamingPreferences::get()->retranslate();
     UiRendererManager::configureGraphicsBackend(
         StreamingPreferences::get());
+    if (startupRecovery) {
+        startupRecovery->stage(QStringLiteral("renderer-configured"));
+    }
 
     // Trickily declare the translation for dialog buttons
     QCoreApplication::translate("QPlatformTheme", "&Yes");
@@ -1089,11 +1197,14 @@ int main(int argc, char *argv[])
     }
 
     UiFramePacer uiFramePacer(StreamingPreferences::get());
-    UiRendererManager uiRendererManager(StreamingPreferences::get());
+    UiRendererManager uiRendererManager(StreamingPreferences::get(),
+                                        startupRecovery.get());
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("UiFramePacer", &uiFramePacer);
     engine.rootContext()->setContextProperty(
         "UiRendererManager", &uiRendererManager);
+    engine.rootContext()->setContextProperty(
+        "UiStartupRecovery", startupRecovery.get());
     QString initialView;
     bool hasGUI = true;
 
@@ -1148,6 +1259,9 @@ int main(int argc, char *argv[])
 
         // Load the main.qml file
         engine.load(QUrl(QStringLiteral("qrc:/gui/main.qml")));
+        if (startupRecovery) {
+            startupRecovery->stage(QStringLiteral("qml-loaded"));
+        }
         if (engine.rootObjects().isEmpty())
             return -1;
 
@@ -1162,6 +1276,9 @@ int main(int argc, char *argv[])
     }
 
     int err = app.exec();
+    if (startupRecovery) {
+        startupRecovery->finishCleanly();
+    }
 
     // Give worker tasks time to properly exit. Fixes PendingQuitTask
     // sometimes freezing and blocking process exit.

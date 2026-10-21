@@ -4,6 +4,9 @@
 
 #include <QMap>
 #include <QString>
+#include <QStringList>
+
+QStringList removeTransientUiStartupOptions(QStringList arguments);
 
 class GlobalCommandLineParser
 {
@@ -20,6 +23,12 @@ public:
     virtual ~GlobalCommandLineParser();
 
     ParseResult parse(const QStringList &args);
+    bool isSafeUiRequested() const { return m_SafeUiRequested; }
+    bool isPreferredUiRetryRequested() const { return m_PreferredUiRetryRequested; }
+
+private:
+    bool m_SafeUiRequested = false;
+    bool m_PreferredUiRetryRequested = false;
 
 };
 

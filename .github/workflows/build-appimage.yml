@@ -164,7 +164,9 @@ jobs:
           scripts/build-appimage.sh
 
       - name: Run profile tests
-        run: build/build-release/tests/streamprofile-tests
+        run: |
+          build/build-release/tests/streamprofile-tests
+          build/build-release/tests/startup/tst_uistartuprecovery
 
       - name: Upload Binaries
         uses: actions/upload-artifact@v6

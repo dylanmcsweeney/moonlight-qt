@@ -377,10 +377,8 @@ ApplicationWindow {
     {
         requestSettingsAccess(function() {
             var editorObject = typeof editor === "function" ? editor() : editor
-            var component = Qt.createComponent("SettingsView.qml")
-            var view = component.createObject(stackView,
-                                              {"profileEditor": editorObject})
-            stackView.push(view)
+            stackView.push("qrc:/gui/SettingsView.qml",
+                           {"profileEditor": editorObject})
         })
     }
 

@@ -34,4 +34,6 @@ HEADERS += \
     ../app/gui/uirenderermanager.h \
     ../app/streaming/vrrratepolicy.h
 
-RESOURCES += tests.qrc
+RESOURCES += \
+    ../app/qml.qrc \
+    ../app/resources.qrc

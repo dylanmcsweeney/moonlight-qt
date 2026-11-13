@@ -9,6 +9,8 @@
 
 #include <QQmlComponent>
 #include <QQmlEngine>
+#include <QQmlContext>
+#include <QJSValue>
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -23,6 +25,8 @@
 #include <QTemporaryDir>
 #include <QVariantList>
 #include <QQuickWindow>
+#include <QQuickItem>
+#include <QPointer>
 #include <QtQuickControls2/QQuickStyle>
 
 #include <memory>
@@ -107,6 +111,36 @@ class SettingsViewSimpleStub : public QObject
 class SettingsViewAppModelStub : public QObject
 {
     Q_OBJECT
+};
+
+class SettingsViewHeaderStub : public QObject
+{
+    Q_OBJECT
+    Q_PROPERTY(int height MEMBER height CONSTANT)
+
+public:
+    int height = 60;
+};
+
+class SettingsViewWindowStub : public QObject
+{
+    Q_OBJECT
+    Q_PROPERTY(int initialPcWindowWidth MEMBER initialPcWindowWidth CONSTANT)
+    Q_PROPERTY(QObject* header READ header CONSTANT)
+
+public:
+    int initialPcWindowWidth = 1280;
+    QObject* header() { return &m_Header; }
+
+    Q_INVOKABLE void requestSettingsAccess(const QJSValue& action) {
+        action.call();
+    }
+    Q_INVOKABLE void fitWindowForView(qreal, qreal) {}
+    Q_INVOKABLE void navigateTo(const QString&, const QVariant&) {}
+    Q_INVOKABLE void showSettingsError(const QString&) {}
+
+private:
+    SettingsViewHeaderStub m_Header;
 };
 
 template <typename T>
@@ -251,7 +285,9 @@ private slots:
     void uiProfileControlsPreference();
     void settingsViewQmlLoadsWithoutMutatingProfile_data();
     void settingsViewQmlLoadsWithoutMutatingProfile();
+    void profileEditorNavigationUsesStackView();
     void appViewQmlCompiles();
+    void appSettingsViewQmlCompiles();
     void versionIdentity();
 
 private:
@@ -340,6 +376,130 @@ void StreamProfileTests::appViewQmlCompiles()
     QQmlEngine engine;
     QQmlComponent component(&engine,
         QUrl::fromLocalFile(QStringLiteral(TEST_APP_GUI_DIR "/AppView.qml")));
+    QVERIFY2(component.status() == QQmlComponent::Ready,
+             qPrintable(component.errorString()));
+}
+
+void StreamProfileTests::profileEditorNavigationUsesStackView()
+{
+    registerSettingsViewQmlTypes();
+
+    StreamProfileManager* manager = StreamProfileManager::get();
+    const QString host = QStringLiteral("settings-navigation-qml-host");
+    manager->ensureHost(host);
+    std::unique_ptr<StreamProfileEditor> editor(manager->createEditor(
+        host, manager->activeProfileId(host), false));
+    QVERIFY(editor);
+    QQmlEngine::setObjectOwnership(editor.get(), QQmlEngine::CppOwnership);
+
+    QQmlEngine engine;
+    SettingsViewWindowStub windowStub;
+    engine.rootContext()->setContextProperty(QStringLiteral("window"),
+                                              &windowStub);
+
+    QFile mainQml(QStringLiteral(TEST_APP_GUI_DIR "/main.qml"));
+    QVERIFY(mainQml.open(QIODevice::ReadOnly));
+    const QByteArray mainSource = mainQml.readAll();
+    const QByteArray functionStart =
+        QByteArrayLiteral("    function openProfileEditor(editor)");
+    const qsizetype functionOffset = mainSource.indexOf(functionStart);
+    QVERIFY(functionOffset >= 0);
+    const qsizetype functionBodyStart = mainSource.indexOf('{', functionOffset);
+    QVERIFY(functionBodyStart >= 0);
+    qsizetype functionEnd = functionBodyStart;
+    int braceDepth = 0;
+    do {
+        if (mainSource.at(functionEnd) == '{') {
+            ++braceDepth;
+        } else if (mainSource.at(functionEnd) == '}') {
+            --braceDepth;
+        }
+        ++functionEnd;
+    } while (functionEnd < mainSource.size() && braceDepth > 0);
+    QCOMPARE(braceDepth, 0);
+    const QByteArray productionFunction = mainSource.mid(
+        functionOffset, functionEnd - functionOffset);
+
+    QQmlComponent stackComponent(&engine);
+    QByteArray harness = R"(
+        import QtQuick 2.9
+        import QtQuick.Controls 2.2
+        Item {
+            id: testRoot
+            width: 1280
+            height: 600
+            function requestSettingsAccess(action) { action() }
+            function testOpenProfileEditor(editor) {
+                openProfileEditor(editor)
+            }
+            function testCloseProfileEditor() {
+                stackView.pop()
+            }
+            %1
+            StackView {
+                id: stackView
+                objectName: "navigationStack"
+                anchors.fill: parent
+                initialItem: Rectangle {
+                    objectName: "pcCards"
+                    color: "transparent"
+                }
+            }
+        }
+    )";
+    harness.replace("%1", productionFunction);
+    stackComponent.setData(harness,
+                           QUrl(QStringLiteral("qrc:/gui/SettingsNavigation.qml")));
+    QVERIFY2(stackComponent.status() == QQmlComponent::Ready,
+             qPrintable(stackComponent.errorString()));
+    std::unique_ptr<QObject> stackObject(stackComponent.create());
+    QVERIFY2(stackObject, qPrintable(stackComponent.errorString()));
+    QObject* stack = stackObject->findChild<QObject*>(
+        QStringLiteral("navigationStack"));
+    QVERIFY(stack);
+    auto* stackItem = qobject_cast<QQuickItem*>(stack);
+    QVERIFY(stackItem);
+
+    QQuickWindow window;
+    window.resize(1280, 600);
+    stackItem->setParentItem(window.contentItem());
+    window.show();
+    QCoreApplication::processEvents();
+
+    QObject* cards = stack->findChild<QObject*>(QStringLiteral("pcCards"));
+    QVERIFY(cards);
+    QCOMPARE(stack->property("depth").toInt(), 1);
+
+    QVERIFY(QMetaObject::invokeMethod(
+        stackObject.get(), "testOpenProfileEditor", Q_ARG(QVariant,
+            QVariant::fromValue(editor.get()))));
+    QTRY_COMPARE_WITH_TIMEOUT(stack->property("depth").toInt(), 2, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!stack->property("busy").toBool(), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!cards->property("visible").toBool(), 5000);
+    QPointer<QObject> currentItem =
+        stack->property("currentItem").value<QObject*>();
+    QVERIFY(currentItem);
+    QVERIFY(currentItem->inherits("QQuickItem"));
+    QCOMPARE(currentItem->property("profileEditor").value<QObject*>(),
+             static_cast<QObject*>(editor.get()));
+    QVERIFY(currentItem->property("visible").toBool());
+
+    QVERIFY(QMetaObject::invokeMethod(
+        stackObject.get(), "testCloseProfileEditor"));
+    QTRY_COMPARE_WITH_TIMEOUT(stack->property("depth").toInt(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!stack->property("busy").toBool(), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(cards->property("visible").toBool(), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(currentItem.isNull(), 5000);
+    QVERIFY(editor);
+    window.close();
+}
+
+void StreamProfileTests::appSettingsViewQmlCompiles()
+{
+    registerSettingsViewQmlTypes();
+    QQmlEngine engine;
+    QQmlComponent component(&engine,
+        QUrl::fromLocalFile(QStringLiteral(TEST_APP_GUI_DIR "/AppSettingsView.qml")));
     QVERIFY2(component.status() == QQmlComponent::Ready,
              qPrintable(component.errorString()));
 }

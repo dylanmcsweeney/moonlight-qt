@@ -222,9 +222,9 @@ CenteredGridView {
             elide: Text.ElideRight
             maximumLineCount: 2
 
-            ToolTip.visible: pcDelegate.hovered && truncated
+            ToolTip.visible: (pcDelegate.hovered || pcDelegate.highlighted) && truncated
             ToolTip.delay: 1000
-            ToolTip.timeout: 4000
+            ToolTip.timeout: 5000
             ToolTip.text: model.name
         }
 

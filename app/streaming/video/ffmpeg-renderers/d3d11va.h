@@ -185,7 +185,7 @@ private:
     DXGI_FORMAT m_TextureFormat;
     int m_DisplayWidth;
     int m_DisplayHeight;
-    AVColorTransferCharacteristic m_LastColorTrc;
+    AVColorTransferCharacteristic m_SwapChainColorTrc;
 
     bool m_AllowTearing;
     bool m_VrrTearingSupported;

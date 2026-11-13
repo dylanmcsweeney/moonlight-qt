@@ -193,7 +193,7 @@ D3D11VARenderer::D3D11VARenderer(int decoderSelectionPass)
       m_RenderAdapterIndex(-1),
       m_VrrRenderAdapterLuidValid(false),
       m_VrrRenderAdapterLuid(0),
-      m_LastColorTrc(AVCOL_TRC_UNSPECIFIED),
+      m_SwapChainColorTrc(AVCOL_TRC_UNSPECIFIED),
       m_AllowTearing(false),
       m_VrrTearingSupported(false),
       m_VrrBorderlessFlipModel(false),
@@ -2522,7 +2522,7 @@ bool D3D11VARenderer::prepareFrameForPresent(AVFrame* frame,
         renderOverlay((Overlay::OverlayType)i);
     }
 
-    if (frame->color_trc != m_LastColorTrc) {
+    if (frame->color_trc != m_SwapChainColorTrc) {
         HRESULT hr;
         if (frame->color_trc == AVCOL_TRC_SMPTE2084) {
             hr = m_CompositionPresenter.active() ?
@@ -2545,7 +2545,7 @@ bool D3D11VARenderer::prepareFrameForPresent(AVFrame* frame,
             }
         }
 
-        m_LastColorTrc = frame->color_trc;
+        m_SwapChainColorTrc = frame->color_trc;
     }
 
     return true;
@@ -3449,7 +3449,7 @@ bool D3D11VARenderer::restoreFixedPresentation(VrrFallbackReason reason)
         if (!setupSwapchainDependentResources()) {
             return false;
         }
-        m_LastColorTrc = AVCOL_TRC_UNSPECIFIED;
+        m_SwapChainColorTrc = AVCOL_TRC_UNSPECIFIED;
     }
     m_VrrSuspended = false;
     m_DecoderParams.enableVrr = false;

@@ -1,3 +1,25 @@
+/*
+ * h264bitstream - a library for reading and writing H.264 video
+ * Copyright (C) 2005-2007 Auroras Entertainment, LLC
+ * Copyright (C) 2008-2011 Avail-TVN
+ *
+ * Written by Alex Izvorski <aizvorski@gmail.com> and Alex Giladi <alex.giladi@gmail.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+ */
+
 #ifndef _H264_BS_H
 #define _H264_BS_H        1
 
@@ -79,7 +101,7 @@ static inline int bs_eof(bs_t* b) { if (b->p >= b->end) { return 1; } else { ret
 
 static inline int bs_overrun(bs_t* b) { if (b->p > b->end) { return 1; } else { return 0; } }
 
-static inline int bs_pos(bs_t* b) { if (b->p > b->end) { return (b->end - b->start); } else { return (b->p - b->start); } }
+static inline int bs_pos(bs_t* b) { if (b->p > b->end) { return (int)(b->end - b->start); } else { return (int)(b->p - b->start); } }
 
 static inline uint32_t bs_read_u1(bs_t* b)
 {
@@ -156,16 +178,18 @@ static inline uint32_t bs_read_ue(bs_t* b)
 
 static inline int32_t bs_read_se(bs_t* b)
 {
-    int32_t r = bs_read_ue(b);
+    // Do the math in unsigned space. bs_read_ue() can return values above
+    // INT32_MAX, and (r+1)/2 on a signed INT32_MAX is undefined behavior.
+    // bs_read_ue() returns at most 0xFFFFFFFE, so both results fit in int32_t.
+    uint32_t r = bs_read_ue(b);
     if (r & 0x01)
     {
-        r = (r+1)/2;
+        return (int32_t)((r >> 1) + 1);
     }
     else
     {
-        r = -(r/2);
+        return -(int32_t)(r >> 1);
     }
-    return r;
 }
 
 static inline void bs_write_u1(bs_t* b, uint32_t v)
@@ -186,7 +210,7 @@ static inline void bs_write_u(bs_t* b, int n, uint32_t v)
     int i;
     for (i = 0; i < n; i++)
     {
-        bs_write_u1(b, (v >> ( n - i - 1 ))&0x01 );
+        bs_write_u1(b, (n - i - 1 >= 32) ? 0 : ((v >> ( n - i - 1 ))&0x01) );
     }
 }
 
@@ -195,7 +219,7 @@ static inline void bs_write_u8(bs_t* b, uint32_t v)
 #ifdef FAST_U8
     if (b->bits_left == 8 && ! bs_eof(b)) // can do fast write
     {
-        b->p[0] = v;
+        b->p[0] = (uint8_t)v;
         b->p++;
         return;
     }

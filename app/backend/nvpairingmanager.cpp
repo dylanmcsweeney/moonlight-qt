@@ -141,6 +141,10 @@ NvPairingManager::getSignatureFromPemCert(const QByteArray& certificate)
     X509* cert = PEM_read_bio_X509(bio, nullptr, nullptr, nullptr);
     BIO_free_all(bio);
 
+    if (cert == nullptr) {
+        return QByteArray();
+    }
+
     QByteArray signature = getSignatureFromCert(cert);
     X509_free(cert);
 
@@ -160,8 +164,15 @@ NvPairingManager::verifySignature(const QByteArray& data, const QByteArray& sign
     X509* cert = PEM_read_bio_X509(bio, nullptr, nullptr, nullptr);
     BIO_free_all(bio);
 
+    if (cert == nullptr) {
+        return false;
+    }
+
     EVP_PKEY* pubKey = X509_get_pubkey(cert);
-    THROW_BAD_ALLOC_IF_NULL(pubKey);
+    if (pubKey == nullptr) {
+        X509_free(cert);
+        return false;
+    }
 
     EVP_MD_CTX* mdctx = EVP_MD_CTX_create();
     THROW_BAD_ALLOC_IF_NULL(mdctx);
@@ -206,7 +217,7 @@ NvPairingManager::saltPin(const QByteArray& salt, QString pin)
 NvPairingManager::PairState
 NvPairingManager::pair(QString appVersion, QString pin, QSslCertificate& serverCert)
 {
-    int serverMajorVersion = NvHTTP::parseQuad(appVersion).at(0);
+    int serverMajorVersion = NvHTTP::parseQuad(appVersion).value(0);
     qInfo() << "Pairing with server generation:" << serverMajorVersion;
 
     QCryptographicHash::Algorithm hashAlgo;
@@ -278,7 +289,7 @@ NvPairingManager::pair(QString appVersion, QString pin, QSslCertificate& serverC
     }
 
     QByteArray challengeResponseData = decrypt(m_Http.getXmlStringFromHex(challengeXml, "challengeresponse"), aesKey);
-    if (challengeResponseData.size() < hashLength) {
+    if (challengeResponseData.size() < hashLength + 16) {
         qCritical() << "Invalid challengeresponse at stage #2";
         m_Http.openConnectionToString(m_Http.m_BaseUrlHttp, "unpair", nullptr, REQUEST_TIMEOUT_MS);
         return PairState::FAILED;

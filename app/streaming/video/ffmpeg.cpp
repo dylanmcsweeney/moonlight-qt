@@ -2537,11 +2537,21 @@ void FFmpegVideoDecoder::writeBuffer(PLENTRY entry, int& offset)
         int nalStart, nalEnd;
         bool needsFixup;
 
-        // Read the old NALU
-        find_nal_unit((uint8_t*)entry->data, entry->length, &nalStart, &nalEnd);
-        read_nal_unit(stream,
-                      (unsigned char *)&entry->data[nalStart],
-                      nalEnd - nalStart);
+        // Find the old SPS NALU
+        if (find_nal_unit((uint8_t*)entry->data, entry->length, &nalStart, &nalEnd) <= 0) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Failed to find SPS");
+            h264_free(stream);
+            goto WriteUnmodifiedBuffer;
+        }
+
+        // Read the SPS. Pass it through unmodified if we fail to parse it.
+        if (read_nal_unit(stream, (uint8_t*)&entry->data[nalStart], nalEnd - nalStart) < 0) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Failed to read SPS");
+            h264_free(stream);
+            goto WriteUnmodifiedBuffer;
+        }
 
         SDL_assert(nalStart == 3 || nalStart == 4); // 3 or 4 byte Annex B start sequence
         SDL_assert(nalEnd == entry->length);
@@ -2574,8 +2584,17 @@ void FFmpegVideoDecoder::writeBuffer(PLENTRY entry, int& offset)
 
             // Copy the modified NALU data. This clobbers byte 0 and starts NALU data at byte 1.
             // Since it prepended one extra byte, subtract one from the returned length.
-            offset += write_nal_unit(stream, (uint8_t*)&m_DecodeBuffer.data()[initialOffset + nalStart - 1],
-                                     MAX_SPS_EXTRA_SIZE + entry->length - nalStart) - 1;
+            // Pass the SPS through unmodified if the write fails.
+            int writeLength = write_nal_unit(stream, (uint8_t*)&m_DecodeBuffer.data()[initialOffset + nalStart - 1],
+                                             MAX_SPS_EXTRA_SIZE + entry->length - nalStart);
+            if (writeLength < 0) {
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                            "Failed to write modified SPS");
+                h264_free(stream);
+                goto WriteUnmodifiedBuffer;
+            }
+
+            offset += writeLength - 1;
 
             // Copy the NALU prefix over from the original SPS
             memcpy(&m_DecodeBuffer.data()[initialOffset], entry->data, nalStart);
@@ -2606,6 +2625,7 @@ void FFmpegVideoDecoder::writeBuffer(PLENTRY entry, int& offset)
         h264_free(stream);
     }
     else {
+WriteUnmodifiedBuffer:
         // Write the buffer as-is
         memcpy(&m_DecodeBuffer.data()[offset],
                entry->data,

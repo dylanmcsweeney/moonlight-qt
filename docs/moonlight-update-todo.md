@@ -15,6 +15,17 @@ Last reviewed: November 13, 2026. This is a review and integration queue, not ap
 - Both Luna Max product implementations needed no corrections. They adapted the hostname improvement to the custom cards and updated all fork-specific D3D11 references. The GUI regression test needed review-driven harness corrections (a visible test surface and explicit nonsquare Material content) before its old/fixed comparison was useful. Independent Sol Medium final review of product changes and the test found no actionable correctness issues. GPU error recovery, HDR transitions and physical mixed-DPI monitor movement remain interactive validation items.
 - No version bump, MSI rebuild or GitHub push in this batch. Remaining checklist work is still pending.
 
+## Second batch — November 13, 2026
+
+- Applied in local commit `8ce39873`: pairing/key/certificate validation (`a6149245`, `2bd4b9f7`, `ee557e83`), TCP/TLS connection timeout and Qt-version-specific connection caching (`74173b26`, `781b26fd`), and safe access to incomplete host version fields (`0c4f7aef`). The optional injected network manager, pinned-certificate checks and Nonary launch extensions are preserved.
+- The same commit includes the H.264 arithmetic and writer bounds fixes (`fa6ae809`, `289782c6`, `9b8886a6`, `c8474c51`), original-packet fallback when SPS fixup fails (`6fc7e816`), restored vendored source headers (`a57e947d`) and normal compiler warnings (`71c3191e`). Existing read-side array clamps remain unchanged. No renderer threading, VRR policy, core submodule or dependency updates were mixed into this batch.
+- Added backend loopback and bitstream boundary suites to the normal qmake test gate. Clean Qt 6.11.1/MSVC 14.52 release build succeeded in `build/batch2-x64-release`; 5 backend QtTest checks (3 behavioral cases), 25 profile/navigation checks and 15 startup-recovery checks passed. All five bitstream boundary groups passed with release-active checks.
+- Independent Clang 22 undefined-behavior sanitizer run passed with `NDEBUG` defined. The identical boundary suite against a throwaway copy of the old `1ffc3e18` bitstream sources reproduced `INT32_MAX + 1` signed overflow and failed as expected. These runs exercise actual production parser/writer code with independent known encodings and guard bytes.
+- Independent Sol Medium final audit found no concrete regressions in production code, test fixtures, test wiring or instructions. Luna Max's product edits required no corrections; test-project integration needed minor moc/header and macOS OpenSSL guard corrections during parent review. No claim is made that the new certificate/challenge error branches or FFmpeg fallback have direct runtime unit coverage; those changes were source-reviewed. Real-host pairing, macOS and Qt 6.12-specific runtime behavior remain interactive/platform validation items.
+- A separate portable test package is at `build/deploy-batch2-test`. Qt deployment succeeded, the packaged executable matches the release-build SHA-256, and the isolated headless smoke exited 0 with no stderr. `build/deploy-x64-release` and installed copies were not replaced by this batch.
+- The build uses the user's local `7.1.0.0` version and unused-timestamp cleanup. Both user files remain unchanged from the start of this batch and uncommitted. No MSI was rebuilt and nothing was pushed to GitHub.
+- Remaining focused candidates include CLI polling ownership, input/keypad changes, exclusive log creation and usable-window bounds. Installer warning cleanup/upgrade testing and the larger concurrency/Nonary/core/color stages remain deferred as listed below.
+
 ## Baseline and scope
 
 - Starting branch: `codex/startup-recovery`, starting HEAD `62154d27`. Our base includes Nonary VRR18/PyroWave, per-PC profiles, multi-instance settings coordination and GUI startup recovery. First-batch commits are recorded above.
@@ -40,9 +51,9 @@ Last reviewed: November 13, 2026. This is a review and integration queue, not ap
 - [ ] Review CLI launch polling ownership (`74020b53`) and undefined quit-progress label (`67dbfddb`), preserving our settings guards and startup recovery. The label fix is applied in `9c2aa36f`; polling ownership remains pending.
 - [x] Review renderer failure-reason initialization (`465c41b5`), D3D11 swapchain/base-class color-state shadowing (`ba700d67`), and DXVA2 failure cleanup (`d606709d`). Applied, independently reviewed and built; GPU-specific interactive checks remain recorded above.
 - [ ] Review adaptive-trigger controller bounds (`9fee675c`), known Steam Controller identification (`d2f6990b`), and Enter versus keypad Enter (`c0f62ad6`, with its required core/protocol changes). Bounds are already equivalent through `72b936173`; identification/keypad work remains pending. Treat `b75fe0d9` as context/dependency, not a feature to pull for its own sake.
-- [ ] Integrate applicable pairing/key/certificate checks (`a6149245`, `2bd4b9f7`, `ee557e83`).
-- [ ] Integrate applicable bitstream/version parsing fixes (`fa6ae809`, `289782c6`, `9b8886a6`, `c8474c51`, `0c4f7aef`, `6fc7e816`); retain source headers and useful warnings (`a57e947d`, `71c3191e`).
-- [ ] Review TCP/TLS timeouts (`74173b26`) and Qt-version-specific connection caching (`781b26fd`).
+- [x] Integrate applicable pairing/key/certificate checks (`a6149245`, `2bd4b9f7`, `ee557e83`). Applied in `8ce39873`; source review, release build and backend tests passed, with direct branch-coverage limits recorded above.
+- [x] Integrate applicable bitstream/version parsing fixes (`fa6ae809`, `289782c6`, `9b8886a6`, `c8474c51`, `0c4f7aef`, `6fc7e816`); retain source headers and useful warnings (`a57e947d`, `71c3191e`). Applied in `8ce39873`; boundary/UBSan and backend suites passed; FFmpeg fallback remains source-reviewed only.
+- [x] Review TCP/TLS timeouts (`74173b26`) and Qt-version-specific connection caching (`781b26fd`). Applied in `8ce39873`; loopback tests verify stalled TLS times out and a sent request may receive a body after 5 seconds. Qt 6.12-only semantics remain platform validation.
 - [ ] Review exclusive/private log creation (`8f2e52e5`), especially shared temporary directories; adapt to our diagnostic/log naming and multi-instance behavior.
 - [ ] Review usable-window-bounds fallback (`d79536b5`). It addresses reported full-bounds behavior, especially Wayland; do not claim it fixes our unreproduced Windows 1080p report without a reproduction.
 - [ ] Run targeted build/regression checks for the changed paths and verify the produced portable directory. Keep a reviewable commit boundary before larger pacing changes.
@@ -121,23 +132,23 @@ Grouped review inventory, not a claim that every unmarked commit should be cherr
 
 ### Pairing / request robustness
 
-- [ ] [`a6149245`](https://github.com/moonlight-stream/moonlight-qt/commit/a6149245) — Don't hardcode the QSslKey algorithm
-- [ ] [`2bd4b9f7`](https://github.com/moonlight-stream/moonlight-qt/commit/2bd4b9f7) — Add missing checks for X509 parsing failures
-- [ ] [`ee557e83`](https://github.com/moonlight-stream/moonlight-qt/commit/ee557e83) — Include the trailing 16 bytes in the challengeResponseData check
-- [ ] [`74173b26`](https://github.com/moonlight-stream/moonlight-qt/commit/74173b26) — Enforce a TCP/TLS HTTP timeout on Qt 6.3+
-- [ ] [`781b26fd`](https://github.com/moonlight-stream/moonlight-qt/commit/781b26fd) — Completely disable connection caching on Qt 6.12+
+- [x] [`a6149245`](https://github.com/moonlight-stream/moonlight-qt/commit/a6149245) — Don't hardcode the QSslKey algorithm — Applied in local commit `8ce39873`.
+- [x] [`2bd4b9f7`](https://github.com/moonlight-stream/moonlight-qt/commit/2bd4b9f7) — Add missing checks for X509 parsing failures — Applied in local commit `8ce39873`.
+- [x] [`ee557e83`](https://github.com/moonlight-stream/moonlight-qt/commit/ee557e83) — Include the trailing 16 bytes in the challengeResponseData check — Applied in local commit `8ce39873`.
+- [x] [`74173b26`](https://github.com/moonlight-stream/moonlight-qt/commit/74173b26) — Enforce a TCP/TLS HTTP timeout on Qt 6.3+ — Applied in local commit `8ce39873`.
+- [x] [`781b26fd`](https://github.com/moonlight-stream/moonlight-qt/commit/781b26fd) — Completely disable connection caching on Qt 6.12+ — Applied in local commit `8ce39873`.
 - [ ] [`8f2e52e5`](https://github.com/moonlight-stream/moonlight-qt/commit/8f2e52e5) — Refuse to open a pre-existing log file (#2068)
 
 ### Bitstream correctness and source hygiene
 
-- [ ] [`a57e947d`](https://github.com/moonlight-stream/moonlight-qt/commit/a57e947d) — Re-add the h264bitstream file headers mistakenly removed during vendoring
-- [ ] [`71c3191e`](https://github.com/moonlight-stream/moonlight-qt/commit/71c3191e) — Remove warn_off for h264bitstream
-- [ ] [`fa6ae809`](https://github.com/moonlight-stream/moonlight-qt/commit/fa6ae809) — Clamp additional values that can be used as array indices
-- [ ] [`289782c6`](https://github.com/moonlight-stream/moonlight-qt/commit/289782c6) — Fix possible UB shift in bs_write_u() for large values of n
-- [ ] [`9b8886a6`](https://github.com/moonlight-stream/moonlight-qt/commit/9b8886a6) — Fix integer truncation warning on MSVC
-- [ ] [`c8474c51`](https://github.com/moonlight-stream/moonlight-qt/commit/c8474c51) — Avoid signed overflow in bs_read_se() (#2071)
-- [ ] [`0c4f7aef`](https://github.com/moonlight-stream/moonlight-qt/commit/0c4f7aef) — Handle unexpected appVersion/gfeVersion quads
-- [ ] [`6fc7e816`](https://github.com/moonlight-stream/moonlight-qt/commit/6fc7e816) — Handle H.264 SPS read/write failure in fixup path
+- [x] [`a57e947d`](https://github.com/moonlight-stream/moonlight-qt/commit/a57e947d) — Re-add the h264bitstream file headers mistakenly removed during vendoring — Applied in local commit `8ce39873`.
+- [x] [`71c3191e`](https://github.com/moonlight-stream/moonlight-qt/commit/71c3191e) — Remove warn_off for h264bitstream — Applied in local commit `8ce39873`.
+- [x] [`fa6ae809`](https://github.com/moonlight-stream/moonlight-qt/commit/fa6ae809) — Clamp additional values that can be used as array indices — Applied in local commit `8ce39873`.
+- [x] [`289782c6`](https://github.com/moonlight-stream/moonlight-qt/commit/289782c6) — Fix possible UB shift in bs_write_u() for large values of n — Applied in local commit `8ce39873`.
+- [x] [`9b8886a6`](https://github.com/moonlight-stream/moonlight-qt/commit/9b8886a6) — Fix integer truncation warning on MSVC — Applied in local commit `8ce39873`.
+- [x] [`c8474c51`](https://github.com/moonlight-stream/moonlight-qt/commit/c8474c51) — Avoid signed overflow in bs_read_se() (#2071) — Applied in local commit `8ce39873`.
+- [x] [`0c4f7aef`](https://github.com/moonlight-stream/moonlight-qt/commit/0c4f7aef) — Handle unexpected appVersion/gfeVersion quads — Applied in local commit `8ce39873`.
+- [x] [`6fc7e816`](https://github.com/moonlight-stream/moonlight-qt/commit/6fc7e816) — Handle H.264 SPS read/write failure in fixup path — Applied in local commit `8ce39873`.
 
 ### Input behavior; coordinate core dependencies
 

@@ -2,6 +2,7 @@
 #include <QDir>
 
 #include "utils.h"
+#include "displaybounds.h"
 
 #include "SDL_compat.h"
 
@@ -203,6 +204,50 @@ bool WMUtils::isRunningDesktopEnvironment()
     // if we have a WM running.
     return isRunningWindowManager();
 #endif
+}
+
+bool WMUtils::hasDisplayUsableBounds()
+{
+    static SDL_atomic_t hasDisplayUsableBounds;
+
+    // If the value is not set yet, populate it now.
+    int val = SDL_AtomicGet(&hasDisplayUsableBounds);
+    if (!(val & VALUE_SET)) {
+        const bool hasUsableBounds = WMUtils::hasAnyDisplayUsableBounds(
+                    SDL_GetNumVideoDisplays(),
+                    [](int displayIndex, QRect* displayBounds, QRect* usableBounds) {
+            SDL_Rect sdlDisplayBounds;
+            SDL_Rect sdlUsableBounds;
+
+            if (SDL_GetDisplayBounds(displayIndex, &sdlDisplayBounds) != 0) {
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                            "SDL_GetDisplayBounds(%d) failed: %s",
+                            displayIndex, SDL_GetError());
+                return false;
+            }
+
+            if (SDL_GetDisplayUsableBounds(displayIndex, &sdlUsableBounds) != 0) {
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                            "SDL_GetDisplayUsableBounds(%d) failed: %s",
+                            displayIndex, SDL_GetError());
+                return false;
+            }
+
+            *displayBounds = QRect(sdlDisplayBounds.x, sdlDisplayBounds.y,
+                                   sdlDisplayBounds.w, sdlDisplayBounds.h);
+            *usableBounds = QRect(sdlUsableBounds.x, sdlUsableBounds.y,
+                                  sdlUsableBounds.w, sdlUsableBounds.h);
+            return true;
+        });
+
+        // Populate the value to return and have for next time.
+        // This can race with another thread populating the same data,
+        // but that's no big deal.
+        val = VALUE_SET | (hasUsableBounds ? VALUE_TRUE : 0);
+        SDL_AtomicSet(&hasDisplayUsableBounds, val);
+    }
+
+    return !!(val & VALUE_TRUE);
 }
 
 bool WMUtils::isGpuSlow()

@@ -1,5 +1,6 @@
 #include "pacer.h"
 #include "path.h"
+#include "streaming/session.h"
 #include <QCryptographicHash>
 #include "vrrpacingworker.h"
 #include "../ivrrframepresenter.h"
@@ -17,6 +18,7 @@
 #endif
 
 #include <SDL_syswm.h>
+#include <QMutexLocker>
 
 #include <utility>
 
@@ -42,6 +44,8 @@ Pacer::Pacer(IFFmpegRenderer* renderer) :
     m_DeferredFreeFrame(nullptr),
     m_Stopping(false),
     m_Shutdown(false),
+    m_VsyncPending(false),
+    m_OverlayRendererAttached(false),
     m_VsyncSource(nullptr),
     m_VsyncRenderer(renderer),
     m_MaxVideoFps(0),
@@ -62,6 +66,14 @@ void Pacer::shutdown()
     }
     m_Shutdown = true;
 
+    // Prevent any callback into a renderer whose context is about to be
+    // stopped or destroyed. OverlayManager waits for an active callback here;
+    // this must happen before joining the VRR worker or a legacy render thread.
+    if (m_OverlayRendererAttached) {
+        Session::get()->getOverlayManager().setOverlayRenderer(nullptr);
+        m_OverlayRendererAttached = false;
+    }
+
     if (m_VrrWorker != nullptr) {
         // The VRR worker owns the renderer context and releases it from its
         // own thread after cancelling any prepared frame.
@@ -69,12 +81,16 @@ void Pacer::shutdown()
         return;
     }
 
-    m_Stopping = true;
+    {
+        QMutexLocker locker(&m_FrameQueueLock);
+        m_Stopping = true;
+        m_PacingQueueNotEmpty.wakeAll();
+        m_VsyncSignalled.wakeAll();
+        m_RenderQueueNotEmpty.wakeAll();
+    }
 
     // Stop the V-sync thread
     if (m_VsyncThread != nullptr) {
-        m_PacingQueueNotEmpty.wakeAll();
-        m_VsyncSignalled.wakeAll();
         SDL_WaitThread(m_VsyncThread, nullptr);
     }
 
@@ -84,12 +100,12 @@ void Pacer::shutdown()
 
     // Stop the render thread
     if (m_RenderThread != nullptr) {
-        m_RenderQueueNotEmpty.wakeAll();
         SDL_WaitThread(m_RenderThread, nullptr);
     }
     else {
         // Notify the renderer that it is being destroyed soon
         // NB: This must happen on the same thread that calls renderFrame().
+        QMutexLocker renderLock(m_VsyncRenderer->renderContextLock());
         m_VsyncRenderer->cleanupRenderContext();
     }
 
@@ -145,23 +161,42 @@ int Pacer::vsyncThread(void *context)
 #endif
 
     bool async = me->m_VsyncSource->isAsync();
-    while (!me->m_Stopping) {
+    for (;;) {
+        bool stopping;
         if (async) {
             // Wait for the VSync source to invoke signalVsync() or 100ms to elapse
-            me->m_FrameQueueLock.lock();
-            me->m_VsyncSignalled.wait(&me->m_FrameQueueLock, 100);
-            me->m_FrameQueueLock.unlock();
+            QMutexLocker locker(&me->m_FrameQueueLock);
+            while (!me->m_Stopping && !me->m_VsyncPending) {
+                if (!me->m_VsyncSignalled.wait(&me->m_FrameQueueLock, 100)) {
+                    break;
+                }
+            }
+            me->m_VsyncPending = false;
+            stopping = me->m_Stopping;
         }
         else {
             // Let the VSync source wait in the context of our thread
-            me->m_VsyncSource->waitForVsync();
+            if (!me->m_VsyncSource->waitForVsync()) {
+                // Fall back to a fixed delay if the VSync source fails.
+                // The condition wait also lets shutdown wake this fallback.
+                QMutexLocker locker(&me->m_FrameQueueLock);
+                if (!me->m_Stopping) {
+                    me->m_VsyncSignalled.wait(&me->m_FrameQueueLock,
+                        1000 / SDL_max(me->m_DisplayFps, 1));
+                }
+                stopping = me->m_Stopping;
+            }
+            else {
+                QMutexLocker locker(&me->m_FrameQueueLock);
+                stopping = me->m_Stopping;
+            }
         }
 
-        if (me->m_Stopping) {
+        if (stopping) {
             break;
         }
 
-        me->handleVsync(1000 / me->m_DisplayFps);
+        me->handleVsync(1000 / SDL_max(me->m_DisplayFps, 1));
     }
 
     return 0;
@@ -177,34 +212,36 @@ int Pacer::renderThread(void* context)
                     SDL_GetError());
     }
 
-    while (!me->m_Stopping) {
+    for (;;) {
         // Wait for the renderer to be ready for the next frame
         me->m_VsyncRenderer->waitToRender();
 
-        // Acquire the frame queue lock to protect the queue and
-        // the not empty condition
-        me->m_FrameQueueLock.lock();
+        AVFrame* frame;
+        {
+            // Protect the queue and its wait predicate with the same lock used
+            // by producers and shutdown.
+            QMutexLocker locker(&me->m_FrameQueueLock);
 
-        // Wait for a frame to be ready to render
-        while (!me->m_Stopping && me->m_RenderQueue.isEmpty()) {
-            me->m_RenderQueueNotEmpty.wait(&me->m_FrameQueueLock);
+            while (!me->m_Stopping && me->m_RenderQueue.isEmpty()) {
+                me->m_RenderQueueNotEmpty.wait(&me->m_FrameQueueLock);
+            }
+
+            if (me->m_Stopping) {
+                break;
+            }
+
+            frame = me->m_RenderQueue.dequeue();
         }
-
-        if (me->m_Stopping) {
-            // Exit this thread
-            me->m_FrameQueueLock.unlock();
-            break;
-        }
-
-        AVFrame* frame = me->m_RenderQueue.dequeue();
-        me->m_FrameQueueLock.unlock();
 
         me->renderFrame(frame);
     }
 
     // Notify the renderer that it is being destroyed soon
     // NB: This must happen on the same thread that calls renderFrame().
-    me->m_VsyncRenderer->cleanupRenderContext();
+    {
+        QMutexLocker renderLock(me->m_VsyncRenderer->renderContextLock());
+        me->m_VsyncRenderer->cleanupRenderContext();
+    }
 
     return 0;
 }
@@ -282,7 +319,7 @@ void Pacer::handleVsync(int timeUntilNextVsyncMillis)
             return;
         }
 
-        if (m_Stopping) {
+        if (m_Stopping || m_PacingQueue.isEmpty()) {
             m_FrameQueueLock.unlock();
             return;
         }
@@ -385,7 +422,7 @@ bool Pacer::initialize(SDL_Window* window, int maxVideoFps,
                 fallbackReason = presenter->checkSupport();
                 if (fallbackReason == VrrFallbackReason::NoFallback) {
                     m_VrrWorker = std::make_unique<VrrPacingWorker>(
-                        presenter, config, &m_Telemetry);
+                        presenter, config, &m_Telemetry, m_VsyncRenderer);
                     if (m_VrrWorker->start()) {
                         m_DisplayFps = config.displayRefreshHz;
                         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
@@ -394,6 +431,8 @@ bool Pacer::initialize(SDL_Window* window, int maxVideoFps,
                                     config.smoothFrameTiming ? "smoothed" : "follows host timestamps",
                                     config.latencyMode == 2 ? "low latency" :
                                     config.latencyMode == 1 ? "balanced target" : "smooth");
+                        Session::get()->getOverlayManager().setOverlayRenderer(m_VsyncRenderer);
+                        m_OverlayRendererAttached = true;
                         return true;
                     }
 
@@ -481,11 +520,16 @@ bool Pacer::initialize(SDL_Window* window, int maxVideoFps,
         m_RenderThread = SDL_CreateThread(Pacer::renderThread, "PacerRender", this);
     }
 
+    Session::get()->getOverlayManager().setOverlayRenderer(m_VsyncRenderer);
+    m_OverlayRendererAttached = true;
+
     return true;
 }
 
 void Pacer::signalVsync()
 {
+    QMutexLocker locker(&m_FrameQueueLock);
+    m_VsyncPending = true;
     m_VsyncSignalled.wakeOne();
 }
 
@@ -505,8 +549,12 @@ void Pacer::renderFrame(AVFrame* frame)
     const uint64_t decoderOutputUs =
         static_cast<uint64_t>(frame->pkt_dts);
     const uint64_t beforeRender = LiGetMicroseconds();
-    // Render it
-    m_VsyncRenderer->renderFrame(frame);
+    // Serialize the legacy renderer context with HDR/window callbacks. The
+    // VRR worker uses its backend's own prepare/present synchronization.
+    {
+        QMutexLocker renderLock(m_VsyncRenderer->renderContextLock());
+        m_VsyncRenderer->renderFrame(frame);
+    }
     const uint64_t afterRender = LiGetMicroseconds();
 
     m_Telemetry.recordLegacyFrame(
@@ -521,7 +569,7 @@ void Pacer::renderFrame(AVFrame* frame)
     av_frame_free(&frame);
 
     // Drop frames if we have too many queued up for a while
-    m_FrameQueueLock.lock();
+    QMutexLocker frameQueueLocker(&m_FrameQueueLock);
 
     int frameDropTarget;
 
@@ -554,13 +602,11 @@ void Pacer::renderFrame(AVFrame* frame)
         AVFrame* frame = m_RenderQueue.dequeue();
 
         // Drop the lock while we call av_frame_free()
-        m_FrameQueueLock.unlock();
+        frameQueueLocker.unlock();
         m_Telemetry.recordLegacyDrop();
         av_frame_free(&frame);
-        m_FrameQueueLock.lock();
+        frameQueueLocker.relock();
     }
-
-    m_FrameQueueLock.unlock();
 }
 
 void Pacer::dropFrameForEnqueue(QQueue<AVFrame*>& queue)

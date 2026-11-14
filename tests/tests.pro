@@ -1,5 +1,5 @@
-# Startup recovery, stream profile, bitstream, and backend reliability suites run
-# in the normal test gate. The opt-in flag adds other platform and diagnostics suites.
+# Startup recovery, stream profile, bitstream, backend reliability, and lifecycle
+# suites run in the normal test gate. The opt-in flag adds other suites.
 TEMPLATE = subdirs
 CONFIG += ordered
 
@@ -7,10 +7,11 @@ streamprofiles.file = streamprofile-tests.pro
 startup.file = startup/startuprecovery.pro
 bitstream.file = bitstream/bitstream.pro
 backendreliability.file = backend-batch2/backendreliability.pro
-SUBDIRS += streamprofiles startup bitstream backendreliability
+lifecyclebatch3.file = lifecycle-batch3/lifecyclebatch3.pro
+SUBDIRS += streamprofiles startup bitstream backendreliability lifecyclebatch3
 
 contains(CONFIG, tests) {
     SUBDIRS += vrr haptics pyrowave
 } else {
-    message(Normal stream profile plus startup recovery plus bitstream and backend suites are enabled; rerun qmake with CONFIG+=tests for optional suites)
+    message(Normal stream profile, startup recovery, bitstream, backend, and lifecycle suites are enabled; rerun qmake with CONFIG+=tests for optional suites)
 }

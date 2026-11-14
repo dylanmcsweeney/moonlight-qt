@@ -1,6 +1,7 @@
 #include "vrr/profile.h"
 #include "vrr/profilecodec.h"
 #include "vrrpacingworker.h"
+#include "../renderer.h"
 
 #include "vrr/vrrtargetwaiter.h"
 #include "vrr/vrrtimingcontroller.h"
@@ -164,8 +165,10 @@ bool isUncPath(const QString& path)
 
 VrrPacingWorker::VrrPacingWorker(IVrrFramePresenter* presenter,
                                  const VrrSessionConfig& config,
-                                 PacerTelemetry* telemetry) :
+                                 PacerTelemetry* telemetry,
+                                 IFFmpegRenderer* renderer) :
     m_Presenter(presenter),
+    m_Renderer(renderer),
     m_Telemetry(telemetry),
     m_Config(config),
     m_CanLatchPresentation(presenter != nullptr &&
@@ -191,6 +194,7 @@ VrrPacingWorker::VrrPacingWorker(IVrrFramePresenter* presenter,
 
 VrrPacingWorker::~VrrPacingWorker()
 {
+    const bool workerThreadStarted = m_WorkerThread != nullptr;
     {
         QMutexLocker lock(&m_FrameQueueLock);
         m_Stopping.store(true);
@@ -202,7 +206,9 @@ VrrPacingWorker::~VrrPacingWorker()
         m_WorkerThread = nullptr;
     }
 
-    if (m_Presenter) m_Presenter->stopFramePreparation();
+    if (m_Presenter && !workerThreadStarted) {
+        m_Presenter->stopFramePreparation();
+    }
 
     VrrReceiveDeadline::clear();
     VrrReceiveDeadline::clearPresentWindow();
@@ -974,8 +980,20 @@ int VrrPacingWorker::run()
         deferFrame(std::move(frame));
     }
 
-    // Release any native state retained between preparation and presentation.
-    m_Presenter->cancelFrame();
+    // Stop asynchronous preparation before releasing the context, then cancel
+    // any acquired image and clean the renderer on its owning worker thread.
+    if (m_Presenter) {
+        m_Presenter->stopFramePreparation();
+    }
+    // Release queued tickets before renderer cleanup; their cancellation may
+    // still reference backend-owned preparation state.
+    discardQueuedFrames(false, TraceDisposition::ShutdownDiscard);
+    if (m_Presenter) {
+        m_Presenter->cancelFrame();
+    }
+    if (m_Renderer != nullptr) {
+        m_Renderer->cleanupRenderContext();
+    }
     return 0;
 }
 

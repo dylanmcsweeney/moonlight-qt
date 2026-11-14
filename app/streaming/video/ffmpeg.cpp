@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <thread>
 #include <utility>
+#include <QMutexLocker>
 
 #include "ffmpeg-renderers/pacer/vrr/receivedeadline.h"
 
@@ -92,12 +93,19 @@ bool FFmpegVideoDecoder::isHdrSupported()
 
 void FFmpegVideoDecoder::setHdrMode(bool enabled)
 {
+    QMutexLocker renderLock(m_FrontendRenderer->renderContextLock());
     m_FrontendRenderer->setHdrMode(enabled);
 }
 
 bool FFmpegVideoDecoder::notifyWindowChanged(PWINDOW_STATE_CHANGE_INFO info)
 {
     if (info == nullptr) {
+        // VRR renderers defer window-state work through their presenter
+        // protocol; ordinary renderers share the context lock with rendering.
+        if (m_Pacer != nullptr && m_Pacer->isVrrActive()) {
+            return m_FrontendRenderer->notifyWindowChanged(info);
+        }
+        QMutexLocker renderLock(m_FrontendRenderer->renderContextLock());
         return m_FrontendRenderer->notifyWindowChanged(info);
     }
 
@@ -119,8 +127,18 @@ bool FFmpegVideoDecoder::notifyWindowChanged(PWINDOW_STATE_CHANGE_INFO info)
         m_Pacer->notifyWindowChanged(&pacingInfo);
     }
 
-    const bool handled =
-        m_FrontendRenderer->notifyWindowChanged(info);
+    bool handled;
+    if (m_Pacer != nullptr && m_Pacer->isVrrActive()) {
+        // D3D11's presenter lock spans prepare/present and is released while
+        // waiting for GPU completion. Vulkan queues display epochs atomically
+        // for the worker. Taking the ordinary render lock here could block the
+        // worker before Present while a backend callback waits on that worker.
+        handled = m_FrontendRenderer->notifyWindowChanged(info);
+    }
+    else {
+        QMutexLocker renderLock(m_FrontendRenderer->renderContextLock());
+        handled = m_FrontendRenderer->notifyWindowChanged(info);
+    }
     if (m_Pacer != nullptr && handled &&
             (originalInfo.stateChangeFlags & deferredPacerFlags) != 0) {
         WINDOW_STATE_CHANGE_INFO pacingInfo = originalInfo;
@@ -403,10 +421,6 @@ void FFmpegVideoDecoder::reset()
     m_PyroWaveSkipRun = 0;
     m_PyroWaveSkipRunWaitUs = 0;
 
-    if (m_CurrentTestMode != TestMode::TestFrameOnly) {
-        Session::get()->getOverlayManager().setOverlayRenderer(nullptr);
-    }
-
     // If we have a separate frontend renderer, free that first
     if (m_FrontendRenderer != m_BackendRenderer) {
         delete m_FrontendRenderer;
@@ -636,31 +650,13 @@ bool FFmpegVideoDecoder::completeInitialization(const AVCodec* decoder, enum AVP
     m_VrrLatencyMode = params->vrrLatencyMode;
     m_CurrentTestMode = testMode;
 
-    // Don't bother initializing Pacer if we're not actually going to render
-    if (testMode != TestMode::TestFrameOnly) {
-        m_Pacer = new Pacer(m_FrontendRenderer);
-        if (!m_Pacer->initialize(params->window, params->frameRate,
-                                 params->enableFramePacing || (params->enableVsync && (m_FrontendRenderer->getRendererAttributes() & RENDERER_ATTRIBUTE_FORCE_PACING)),
-                                 params->enableVsync,
-                                 params->enableVrr,
-                                 params->vrrDisplayRefreshHz,
-                                 params->smoothVrrFrameTiming,
-                                 m_FrontendRenderer->getCalibrationIdentity().isEmpty() ? QString() :
-                                 Session::get()->vrrCalibrationContext() + QString("|%1|%2|%3|%4|%5")
-                                     .arg(params->width).arg(params->height).arg(params->videoFormat)
-                                     .arg(m_FrontendRenderer->getCalibrationIdentity())
-                                     .arg(decoder != nullptr ? decoder->name : "pyrowave"),
-                                 params->vrrLatencyMode)) {
-            return false;
-        }
-    }
-
     // PyroWave decodes without FFmpeg; its decoder is already initialized
     if (decoder != nullptr && !initializeAVCodecContext(decoder, requiredFormat, params, testMode)) {
         return false;
     }
 
-    if (testMode != TestMode::TestFrameOnly && !finishRenderInitialization(params)) {
+    if (testMode != TestMode::TestFrameOnly &&
+            !finishRenderInitialization(params, decoder)) {
         return false;
     }
 
@@ -885,7 +881,8 @@ bool FFmpegVideoDecoder::initializeAVCodecContext(const AVCodec* decoder, enum A
     return true;
 }
 
-bool FFmpegVideoDecoder::finishRenderInitialization(PDECODER_PARAMETERS params)
+bool FFmpegVideoDecoder::finishRenderInitialization(PDECODER_PARAMETERS params,
+                                                    const AVCodec* decoder)
 {
     if ((params->videoFormat & VIDEO_FORMAT_MASK_H264) &&
             !(m_BackendRenderer->getDecoderCapabilities() & CAPABILITY_REFERENCE_FRAME_INVALIDATION_AVC)) {
@@ -902,11 +899,32 @@ bool FFmpegVideoDecoder::finishRenderInitialization(PDECODER_PARAMETERS params)
         m_NeedsSpsFixup = false;
     }
 
-    // Tell overlay manager to use this frontend renderer
-    Session::get()->getOverlayManager().setOverlayRenderer(m_FrontendRenderer);
-
     // Allow the renderer to perform final preparations for rendering
     m_FrontendRenderer->prepareToRender();
+
+    const QString rendererIdentity = m_FrontendRenderer->getCalibrationIdentity();
+    const QString calibrationKey = rendererIdentity.isEmpty() ? QString() :
+        Session::get()->vrrCalibrationContext() + QString("|%1|%2|%3|%4|%5")
+            .arg(params->width).arg(params->height).arg(params->videoFormat)
+            .arg(rendererIdentity)
+            .arg(decoder != nullptr ? decoder->name : "pyrowave");
+
+    // Pacer owns renderer callback registration and every render producer.
+    // Start it only after the frontend context has completed its preparation.
+    m_Pacer = new Pacer(m_FrontendRenderer);
+    if (!m_Pacer->initialize(params->window, params->frameRate,
+                             params->enableFramePacing ||
+                                 (params->enableVsync &&
+                                  (m_FrontendRenderer->getRendererAttributes() &
+                                   RENDERER_ATTRIBUTE_FORCE_PACING)),
+                             params->enableVsync,
+                             params->enableVrr,
+                             params->vrrDisplayRefreshHz,
+                             params->smoothVrrFrameTiming,
+                             calibrationKey,
+                             params->vrrLatencyMode)) {
+        return false;
+    }
 
     // Only create the decoder thread when instantiating the decoder for real. It will use APIs from
     // moonlight-common-c that can only be legally called with an established connection.

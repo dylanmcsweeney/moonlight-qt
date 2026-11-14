@@ -2,6 +2,7 @@
 #include "../../app/streaming/video/ffmpeg-renderers/pacer/vrr/profilecodec.h"
 #include "../../app/streaming/video/ffmpeg-renderers/pacer/vrr/vrrframedroppolicy.h"
 #include "../../app/streaming/video/ffmpeg-renderers/pacer/vrrpacingworker.h"
+#include "../../app/streaming/video/ffmpeg-renderers/renderer.h"
 #include "vrrtestfakes.h"
 
 #include <SDL.h>
@@ -184,6 +185,50 @@ public:
     }
     void stopFramePreparation() override { stopped = true; }
 };
+
+class RendererContextProbe : public IFFmpegRenderer {
+public:
+    explicit RendererContextProbe(PreparedFramePresenter& presenter)
+        : IFFmpegRenderer(RendererType::Unknown), m_Presenter(presenter) {}
+
+    bool initialize(PDECODER_PARAMETERS) override { return true; }
+    bool prepareDecoderContext(AVCodecContext*, AVDictionary**) override { return true; }
+    void renderFrame(AVFrame*) override {}
+
+    void cleanupRenderContext() override
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        cleanupThread = std::this_thread::get_id();
+        preparationStoppedAtCleanup = m_Presenter.stopped;
+        ++cleanupCount;
+    }
+
+    PreparedFramePresenter& m_Presenter;
+    std::mutex mutex;
+    std::thread::id cleanupThread;
+    bool preparationStoppedAtCleanup = false;
+    unsigned cleanupCount = 0;
+};
+
+void testVrrRendererContextCleanupRunsOnWorker()
+{
+    PreparedFramePresenter backend;
+    RendererContextProbe renderer(backend);
+    PacerTelemetry telemetry;
+    const std::thread::id callerThread = std::this_thread::get_id();
+    {
+        VrrPacingWorker worker(&backend, enabledConfig(), &telemetry, &renderer);
+        expect(worker.start(), "VRR worker with a renderer context must start");
+    }
+
+    std::lock_guard<std::mutex> lock(renderer.mutex);
+    expect(renderer.cleanupCount == 1,
+           "VRR shutdown must clean the renderer context exactly once");
+    expect(renderer.cleanupThread != callerThread,
+           "VRR shutdown must clean the renderer context on its owning worker");
+    expect(renderer.preparationStoppedAtCleanup,
+           "VRR shutdown must stop asynchronous frame preparation before context cleanup");
+}
 
 void testPreparedFramesOverlapAndTrace()
 {
@@ -2739,6 +2784,7 @@ int main()
         return 1;
     }
 
+    testVrrRendererContextCleanupRunsOnWorker();
     testPreparedFramesOverlapAndTrace();
     testSlowPreparedFramesKeepPresenting();
     testPreparedFrameCancellationAndBound();

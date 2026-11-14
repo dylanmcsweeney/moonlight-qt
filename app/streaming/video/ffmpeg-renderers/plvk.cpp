@@ -1181,6 +1181,7 @@ bool PlVkRenderer::populateQueues(int videoFormat)
     vkDeviceContext->nb_comp_queues = m_Vulkan->queue_compute.count;
 
     // Select a video decode queue that is capable of decoding our chosen format
+    vkDeviceContext->queue_family_decode_index = -1;
     for (uint32_t i = 0; i < queueFamilyCount; i++) {
         if (queueFamilies[i].queueFamilyProperties.queueFlags & VK_QUEUE_VIDEO_DECODE_BIT_KHR) {
             if (videoFormat & VIDEO_FORMAT_MASK_H264) {
@@ -1436,6 +1437,13 @@ void PlVkRenderer::waitToRender()
     if (pl_gpu_is_failed(m_Vulkan->gpu)) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                      "GPU is in failed state. Recreating renderer.");
+        queueRenderDeviceReset();
+        return;
+    }
+
+    // A failed swapchain recreation leaves no target to resize or render into.
+    // Request the normal renderer reset and skip this frame.
+    if (m_Swapchain == nullptr) {
         queueRenderDeviceReset();
         return;
     }

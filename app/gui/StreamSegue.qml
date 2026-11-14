@@ -126,20 +126,7 @@ Item {
         SystemProperties.waitForAsyncLoad()
 
         // Kick off the stream
-        spinnerTimer.start()
         streamLoader.active = true
-    }
-
-    Timer {
-        id: spinnerTimer
-
-        // Display the spinner appearance a bit to allow us to reach
-        // the code in Session.exec() that pumps the event loop.
-        // If we display it immediately, it will briefly hang in the
-        // middle of the animation on Windows, which looks very
-        // obviously broken.
-        interval: 100
-        onTriggered: stageSpinner.visible = true
     }
 
     Timer {
@@ -200,6 +187,11 @@ Item {
                 // Allow an extra 500 ms for the tooltip's fade-out animation to finish
                 startSessionTimer.interval = toast.timeout + 500;
             }
+
+            // Wait until decoder probing has completed before animating. On
+            // Wayland this avoids a Qt/libdecor event-loop livelock while SDL
+            // creates the decoder's window and renderer.
+            stageSpinner.visible = true
 
             // Start the timer to wait for toasts (or start the session immediately)
             startSessionTimer.start()

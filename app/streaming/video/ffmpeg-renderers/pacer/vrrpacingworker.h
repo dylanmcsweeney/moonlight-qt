@@ -22,6 +22,7 @@
 #include <QWaitCondition>
 
 class VrrTimingController;
+class IFFmpegRenderer;
 
 // Owns bounded admission, controller state and native presentation. A backend
 // may prepare independent offscreen images through cancellable tickets, but
@@ -31,7 +32,8 @@ class VrrPacingWorker {
 public:
     VrrPacingWorker(IVrrFramePresenter* presenter,
                     const VrrSessionConfig& config,
-                    PacerTelemetry* telemetry);
+                    PacerTelemetry* telemetry,
+                    IFFmpegRenderer* renderer = nullptr);
     ~VrrPacingWorker();
 
     VrrPacingWorker(const VrrPacingWorker&) = delete;
@@ -211,6 +213,7 @@ private:
     const char* tearClassification(const TraceRow& row) const;
 
     IVrrFramePresenter* m_Presenter;
+    IFFmpegRenderer* m_Renderer;
     PacerTelemetry* m_Telemetry;
     VrrSessionConfig m_Config;
     bool m_CanLatchPresentation = false;

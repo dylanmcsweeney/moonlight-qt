@@ -5,6 +5,7 @@
 #include "SDL_compat.h"
 #include "settings/mappingmanager.h"
 #include "streaming/input/dualsensehaptics.h"
+#include "streaming/input/steamcontroller.h"
 
 #include <QtMath>
 
@@ -505,6 +506,11 @@ uint8_t SdlInputHandler::moonlightControllerType(SDL_GameController* controller)
 #endif
         return LI_CTYPE_NINTENDO;
     default:
+        if (GamepadUtils::isKnownSteamController(
+                    SDL_GameControllerGetVendor(controller),
+                    SDL_GameControllerGetProduct(controller))) {
+            return LI_CTYPE_STEAM;
+        }
         return LI_CTYPE_UNKNOWN;
     }
 }

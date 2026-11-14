@@ -1,14 +1,27 @@
 import QtQuick 2.0
 import QtQuick.Controls 2.5
+import "PopupFocus.js" as PopupFocus
 
 Dialog {
+    id: dialog
     modal: true
     anchors.centerIn: Overlay.overlay
 
+    onVisibleChanged: PopupFocus.setDialogVisible(dialog, visible)
+
+    Component.onDestruction: {
+        PopupFocus.setDialogVisible(dialog, false)
+        if (typeof stackView !== "undefined" && stackView &&
+                stackView.focusViewAfterDialog) {
+            PopupFocus.restoreViewFocus(stackView)
+        }
+    }
+
     onClosed: {
-        // We must force focus back to the last item. If we don't,
-        // gamepad and keyboard navigation will break after a
-        // dialog appears.
-        stackView.forceActiveFocus()
+        // Keep focus in another open popup, such as an error shown while
+        // a pairing dialog is closing. Otherwise restore view navigation.
+        if (typeof stackView !== "undefined" && stackView) {
+            PopupFocus.restoreViewFocus(stackView)
+        }
     }
 }

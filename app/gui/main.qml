@@ -1,5 +1,5 @@
 import QtQuick 2.9
-import QtQuick.Controls 2.2
+import QtQuick.Controls 2.5
 import QtQuick.Layouts 1.3
 import QtQuick.Window 2.2
 import QtQuick.Controls.Material 2.2
@@ -10,6 +10,8 @@ import StreamingPreferences 1.0
 import StreamProfileManager 1.0
 import SystemProperties 1.0
 import SdlGamepadKeyNavigation 1.0
+import "PopupFocus.js" as PopupFocus
+import "PendingDialogActions.js" as PendingDialogActions
 
 ApplicationWindow {
     // This is the Qt Quick render-pass clear color. Windows resize gaps are
@@ -179,7 +181,7 @@ ApplicationWindow {
                  UiStartupRecovery.warning.length > 0)) {
             startupRecoveryDialog.open()
         }
-        if (runConfigChecks) {
+        if (isGuiLaunch) {
             if (SystemProperties.isWow64) {
                 wow64Dialog.open()
             }
@@ -195,7 +197,7 @@ ApplicationWindow {
         target: UiRendererManager
 
         function onSoftwareD3D12Detected(adapterName) {
-            if (runConfigChecks) {
+            if (isGuiLaunch) {
                 softwareD3D12Dialog.adapterName = adapterName
                 softwareD3D12Dialog.open()
             }
@@ -252,6 +254,7 @@ ApplicationWindow {
 
     StackView {
         id: stackView
+        property bool focusViewAfterDialog: false
         anchors.fill: parent
         focus: true
 
@@ -264,12 +267,15 @@ ApplicationWindow {
 
         onCurrentItemChanged: {
             // Ensure focus travels to the next view when going back
-            if (currentItem) {
-                currentItem.forceActiveFocus()
-            }
+            PopupFocus.focusCurrentView(stackView)
         }
 
+        Window.onActiveFocusItemChanged: PopupFocus.keepModalFocus(Overlay.overlay)
+
         Keys.onEscapePressed: {
+            if (PopupFocus.rejectTopModal()) {
+                return
+            }
             if (depth > 1) {
                 goBack()
             }
@@ -279,6 +285,9 @@ ApplicationWindow {
         }
 
         Keys.onBackPressed: {
+            if (PopupFocus.rejectTopModal()) {
+                return
+            }
             if (depth > 1) {
                 goBack()
             }
@@ -311,24 +320,28 @@ ApplicationWindow {
     }
 
     onVisibleChanged: {
-        // When we become invisible while streaming is going on,
-        // stop polling immediately.
-        if (!visible) {
-            inactivityTimer.stop()
+        // CLI commands manage polling through ComputerSeeker. The window
+        // owns polling only for a normal GUI launch.
+        if (isGuiLaunch) {
+            // When we become invisible while streaming is going on,
+            // stop polling immediately.
+            if (!visible) {
+                inactivityTimer.stop()
 
-            if (pollingActive) {
-                ComputerManager.stopPollingAsync()
-                pollingActive = false
+                if (pollingActive) {
+                    ComputerManager.stopPollingAsync()
+                    pollingActive = false
+                }
             }
-        }
-        else if (active) {
-            // When we become visible and active again, start polling
-            inactivityTimer.stop()
+            else if (active) {
+                // When we become visible and active again, start polling
+                inactivityTimer.stop()
 
-            // Restart polling if it was stopped
-            if (!pollingActive) {
-                ComputerManager.startPolling()
-                pollingActive = true
+                // Restart polling if it was stopped
+                if (!pollingActive) {
+                    ComputerManager.startPolling()
+                    pollingActive = true
+                }
             }
         }
 
@@ -337,20 +350,24 @@ ApplicationWindow {
     }
 
     onActiveChanged: {
-        if (active) {
-            // Stop the inactivity timer
-            inactivityTimer.stop()
+        // CLI commands manage polling through ComputerSeeker. The window
+        // owns polling only for a normal GUI launch.
+        if (isGuiLaunch) {
+            if (active) {
+                // Stop the inactivity timer
+                inactivityTimer.stop()
 
-            // Restart polling if it was stopped
-            if (!pollingActive) {
-                ComputerManager.startPolling()
-                pollingActive = true
+                // Restart polling if it was stopped
+                if (!pollingActive) {
+                    ComputerManager.startPolling()
+                    pollingActive = true
+                }
             }
-        }
-        else {
-            // Start the inactivity timer to stop polling
-            // if focus does not return within a few minutes.
-            inactivityTimer.restart()
+            else {
+                // Start the inactivity timer to stop polling
+                // if focus does not return within a few minutes.
+                inactivityTimer.restart()
+            }
         }
 
         // Poll for gamepad input only when the window is in focus
@@ -633,6 +650,7 @@ ApplicationWindow {
         property string changedAt: ""
         title: qsTr("Settings Changed in Another Instance")
         modal: true
+        onRejected: PendingDialogActions.cancelExternalSettingsAction(window)
 
         contentItem: ColumnLayout {
             spacing: 8
@@ -676,6 +694,7 @@ ApplicationWindow {
         title: templateEditor ? qsTr("Default Profile Template Changed") :
                                qsTr("Active Profile Changed")
         modal: true
+        onRejected: PendingDialogActions.cancelExternalSettingsAction(window)
 
         contentItem: Label {
             width: 420
@@ -738,6 +757,7 @@ ApplicationWindow {
         id: externalReloadLocalChangesDialog
         title: qsTr("Local Settings Changed")
         modal: true
+        onRejected: PendingDialogActions.cancelExternalSettingsAction(window)
 
         contentItem: Label {
             width: 420
@@ -776,6 +796,7 @@ ApplicationWindow {
         id: globalUnsavedSettingsDialog
         title: qsTr("Unsaved Local Settings")
         modal: true
+        onRejected: PendingDialogActions.cancelGlobalCloseAction(window)
 
         Label {
             width: 420

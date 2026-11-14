@@ -3,6 +3,7 @@
 #include "SDL_compat.h"
 
 #include <array>
+#include <QMutex>
 
 #include "streaming/video/decoder.h"
 #include "streaming/video/overlaymanager.h"
@@ -162,8 +163,20 @@ public:
 
     IFFmpegRenderer(RendererType type) : m_Type(type) {}
 
+    // Serializes the ordinary render path with HDR, window-state, and context
+    // cleanup callbacks. Overlay callbacks deliberately use their own backend
+    // synchronization and must not take this lock.
+    QMutex* renderContextLock() {
+        return &m_RenderContextLock;
+    }
+
     virtual bool initialize(PDECODER_PARAMETERS params) = 0;
     virtual bool prepareDecoderContext(AVCodecContext* context, AVDictionary** options) = 0;
+
+    // The ordinary Pacer path serializes renderFrame() with HDR/window-state
+    // callbacks through renderContextLock(). VRR presenters provide their own
+    // backend synchronization because their prepare/present lifetimes can span
+    // a target wait.
     virtual void renderFrame(AVFrame* frame) = 0;
     virtual GpuTrace* gpuDiagnosticTrace() { return nullptr; }
 
@@ -199,7 +212,8 @@ public:
         // Don't wait by default
     }
 
-    // Called on the same thread as renderFrame() during destruction of the renderer
+    // Called on the owning render thread during destruction. The ordinary
+    // Pacer path holds renderContextLock(); VRR cleanup stays on its worker.
     virtual void cleanupRenderContext() {
         // Nothing
     }
@@ -306,6 +320,7 @@ public:
         return getPreferredPixelFormat(videoFormat) == pixelFormat;
     }
 
+    // Synchronized by renderContextLock() on the ordinary Pacer path.
     virtual void setHdrMode(bool) {
         // Nothing
     }
@@ -315,6 +330,8 @@ public:
         return true;
     }
 
+    // Synchronized by renderContextLock() on the ordinary Pacer path.
+    // VRR presenters handle window epochs through their backend protocol.
     virtual bool notifyWindowChanged(PWINDOW_STATE_CHANGE_INFO) {
         // Assume the renderer cannot handle window state changes
         return false;
@@ -514,7 +531,9 @@ public:
         return true;
     }
 
-    // IOverlayRenderer
+    // IOverlayRenderer. Overlay delivery is not synchronized by
+    // renderContextLock(): backend callbacks must use their own short-lived
+    // synchronization and must not try to take the render lock.
     virtual void notifyOverlayUpdated(Overlay::OverlayType) override {
         // Nothing
     }
@@ -557,6 +576,7 @@ protected:
 
 private:
     RendererType m_Type;
+    QMutex m_RenderContextLock;
 
     // Properties watched by hasFrameFormatChanged()
     int m_LastFrameWidth = 0;

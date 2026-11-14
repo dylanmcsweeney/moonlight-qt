@@ -11,6 +11,7 @@
 #include <QThreadPool>
 #include <QCoreApplication>
 #include <QRandomGenerator>
+#include <QMutexLocker>
 
 #define SER_HOSTS "hosts"
 #define SER_HOSTS_BACKUP "hostsbackup"
@@ -207,9 +208,13 @@ ComputerManager::~ComputerManager()
     // Stop the delayed flush thread before acquiring the lock in write mode
     // to avoid deadlocking with a flush that needs the lock in read mode.
     {
-        // Wake the delayed flush thread
-        m_DelayedFlushThread->requestInterruption();
-        m_DelayedFlushCondition.wakeOne();
+        // Share the predicate lock so shutdown cannot race the worker between
+        // checking its wait condition and entering wait().
+        {
+            QMutexLocker locker(&m_DelayedFlushMutex);
+            m_DelayedFlushThread->requestInterruption();
+            m_DelayedFlushCondition.wakeOne();
+        }
 
         // Wait for it to terminate (and finish any pending flush)
         m_DelayedFlushThread->wait();

@@ -250,6 +250,8 @@ HEADERS += \
     cli/listapps.h \
     cli/quitstream.h \
     cli/startstream.h \
+    displaybounds.h \
+    logfile.h \
     settings/streamingpreferences.h \
     settings/uistartuprecovery.h \
     settings/streamprofilemanager.h \
@@ -258,6 +260,7 @@ HEADERS += \
     diagnostics/gputrace.h \
     diagnostics/diagnosticzip.h \
     streaming/input/dualsensehaptics.h \
+    streaming/input/steamcontroller.h \
     streaming/input/input.h \
     streaming/session.h \
     streaming/video/amddecodepolicy.h \

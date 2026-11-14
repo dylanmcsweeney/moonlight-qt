@@ -19,6 +19,7 @@
 #include <QStandardPaths>
 #include <QSettings>
 #include <QFileInfo>
+#include <QMetaObject>
 #include <memory>
 
 #ifdef Q_OS_UNIX
@@ -52,6 +53,7 @@
 #include "cli/pair.h"
 #include "cli/commandlineparser.h"
 #include "path.h"
+#include "logfile.h"
 #include "utils.h"
 #include "diagnostics/diagnosticcapture.h"
 #include "gui/computermodel.h"
@@ -99,6 +101,7 @@ static QRegularExpression k_RikeyIdRegex("&rikeyid=[\\d-]+");
 // Max log file size of 10 MB
 static const uint64_t k_MaxLogSizeBytes = 10 * 1024 * 1024;
 static QAtomicInteger<uint64_t> s_LogBytesWritten = 0;
+// Kept alive for the entire process so queued logger tasks cannot outlive it.
 static QFile* s_LoggerFile;
 #endif
 
@@ -409,8 +412,12 @@ int SDLCALL signalHandlerThread(void* data)
                     _Exit(1);
                 }
 
-                // If we're not streaming, we'll close the whole app
-                QCoreApplication::instance()->quit();
+                // If we're not streaming, close the whole app on the main thread
+                if (QCoreApplication* app = QCoreApplication::instance()) {
+                    QMetaObject::invokeMethod(app, []() {
+                        QCoreApplication::quit();
+                    }, Qt::QueuedConnection);
+                }
                 requestedQuit = true;
             }
             break;
@@ -580,8 +587,11 @@ int main(int argc, char *argv[])
     if (IS_UNSPECIFIED_HANDLE(oldConErr))
 #endif
     {
-        s_LoggerFile = new QFile(tempDir.filePath(QString("Moonlight-%1.log").arg(QDateTime::currentSecsSinceEpoch())));
-        if (s_LoggerFile->open(QIODevice::WriteOnly | QIODevice::Text)) {
+        auto logFile = Utils::createPrivateLogFile(tempDir.path(),
+                QDateTime::currentSecsSinceEpoch(),
+                QCoreApplication::applicationPid());
+        if (logFile) {
+            s_LoggerFile = logFile.release();
             QTextStream(stderr) << "Redirecting log output to " << s_LoggerFile->fileName() << Qt::endl;
             s_LoggerStream.setDevice(s_LoggerFile);
         }
@@ -1255,7 +1265,7 @@ int main(int argc, char *argv[])
 
     if (hasGUI) {
         engine.rootContext()->setContextProperty("initialView", initialView);
-        engine.rootContext()->setContextProperty("runConfigChecks", commandLineParserResult == GlobalCommandLineParser::NormalStartRequested);
+        engine.rootContext()->setContextProperty("isGuiLaunch", commandLineParserResult == GlobalCommandLineParser::NormalStartRequested);
 
         // Load the main.qml file
         engine.load(QUrl(QStringLiteral("qrc:/gui/main.qml")));

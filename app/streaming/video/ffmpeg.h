@@ -61,7 +61,7 @@ private:
                                   PDECODER_PARAMETERS params,
                                   TestMode testMode);
 
-    bool finishRenderInitialization(PDECODER_PARAMETERS params);
+    bool finishRenderInitialization(PDECODER_PARAMETERS params, const AVCodec* decoder);
 
     void stringifyVideoStats(VIDEO_STATS& stats, char* output, int length);
 

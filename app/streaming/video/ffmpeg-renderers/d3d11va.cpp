@@ -2720,7 +2720,6 @@ bool D3D11VARenderer::finishVrrPresentReady(
     // it resets the member telemetry under the same mutex. Publishing after
     // reacquisition avoids racing that reset or attaching this completion to
     // a replacement frame.
-    const uint64_t waitStartUs = LiGetMicroseconds();
     DWORD lastEventResult = WAIT_TIMEOUT;
     uint64_t initialPollStartUs = 0, initialPollEndUs = 0, initialCompletedValue = 0;
     bool sampledInitialPoll = false;

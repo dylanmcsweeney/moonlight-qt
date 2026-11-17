@@ -278,9 +278,9 @@ try {
             $wixProject,
             '/p:Configuration=release',
             '/p:Platform=x64',
-            "/p:OutputPath=$packageOutputPath",
-            "/p:IntermediateOutputPath=$packageObjPath",
-            "/p:MSBuildProjectExtensionsPath=$packageObjPath"
+            "/p:OutputPath=$packageOutputPath/",
+            "/p:IntermediateOutputPath=$packageObjPath/",
+            "/p:MSBuildProjectExtensionsPath=$packageObjPath/"
         )
         & $msbuild @msbuildArgs
         if ($LASTEXITCODE -ne 0) {

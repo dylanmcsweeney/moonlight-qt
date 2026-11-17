@@ -11,6 +11,9 @@ lifecyclebatch3.file = lifecycle-batch3/lifecyclebatch3.pro
 SUBDIRS += streamprofiles startup bitstream backendreliability lifecyclebatch3
 
 contains(CONFIG, tests) {
+    powerActions.file = $$PWD/power/poweractions.pro
+    powerActionView.file = $$PWD/power/poweractionview.pro
+    SUBDIRS += powerActions powerActionView
     launchWarning.file = $$PWD/backend/launchwarning.pro
     SUBDIRS += launchWarning
     SUBDIRS += vrr haptics pyrowave

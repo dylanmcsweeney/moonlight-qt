@@ -243,6 +243,7 @@ HEADERS += \
     backend/framelimitercapabilities.h \
     backend/nvhttp.h \
     backend/launchwarning.h \
+    backend/poweractions.h \
     backend/nvpairingmanager.h \
     backend/computermanager.h \
     backend/boxartmanager.h \

@@ -163,6 +163,9 @@ public:
     QVector<int>
     parseQuad(QString quad);
 
+    // Call only after explicit user confirmation. Exactly one GET and one POST; no retries.
+    void requestHostSleep();
+
     void
     quitApp();
 
@@ -201,7 +204,10 @@ private:
                    QString command,
                    QString arguments,
                    int timeoutMs,
-                   NvLogLevel logLevel);
+                   NvLogLevel logLevel,
+                   bool powerAction = false,
+                   QNetworkAccessManager::Operation operation = QNetworkAccessManager::GetOperation,
+                   QSslCertificate pairedServerCert = QSslCertificate());
 
     NvAddress m_Address;
     QNetworkAccessManager* m_Nam;

@@ -2,6 +2,7 @@
 #include <QNetworkInterface>
 #include <QSysInfo>
 #include <QDir>
+#include <chrono>
 #include "session.h"
 #include "settings/streamingpreferences.h"
 #include "streaming/streamutils.h"
@@ -1808,6 +1809,7 @@ public:
 // Called in a non-main thread
 bool Session::startConnectionAsync()
 {
+    m_HostLaunchWarning.clear();
     // The UI should have ensured the old game was already quit
     // if we decide to stream a different game.
     Q_ASSERT(m_Computer->currentGameId == 0 ||
@@ -1837,6 +1839,7 @@ bool Session::startConnectionAsync()
     }
 
     QString rtspSessionUrl;
+    LaunchWarning::Warning launchWarning;
 
     try {
         NvHTTP http(m_Computer);
@@ -1849,7 +1852,8 @@ bool Session::startConnectionAsync()
                       m_InputHandler->getAttachedPlayStationGamepadMask(),
                       !m_Preferences->multiController,
                       m_PresentationSettings.enableVrr,
-                      rtspSessionUrl);
+                      rtspSessionUrl,
+                      launchWarning);
     } catch (const GfeHttpResponseException& e) {
         emit displayLaunchError(tr("Host returned error: %1").arg(e.toQString()));
         return false;
@@ -1966,6 +1970,7 @@ bool Session::startConnectionAsync()
         return false;
     }
 
+    m_HostLaunchWarning = LaunchWarning::text(launchWarning);
     emit connectionStarted();
     return true;
 }
@@ -2259,7 +2264,21 @@ void Session::exec()
         m_VideoDecoder->notifyWindowChanged(&windowChangeInfo);
     };
 
+    // The async thread only supplies this after RTSP connection success. Start
+    // its lifetime when the streaming window is ready, without a Qt dialog.
+    bool hostWarningVisible = !m_HostLaunchWarning.isEmpty();
+    const auto hostWarningExpiresAt = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    if (hostWarningVisible) {
+        m_OverlayManager.setStatusMessage(Overlay::StatusSource::HostLaunch,
+                                         m_HostLaunchWarning.toUtf8().toStdString());
+        m_HostLaunchWarning.clear();
+    }
+
     for (;;) {
+        if (hostWarningVisible && std::chrono::steady_clock::now() >= hostWarningExpiresAt) {
+            m_OverlayManager.setStatusMessage(Overlay::StatusSource::HostLaunch, "");
+            hostWarningVisible = false;
+        }
 #if SDL_VERSION_ATLEAST(2, 0, 18) && !defined(STEAM_LINK)
         // SDL 2.0.18 has a proper wait event implementation that uses platform
         // support to block on events rather than polling on Windows, macOS, X11,
@@ -2649,6 +2668,8 @@ void Session::exec()
     }
 
 DispatchDeferredCleanup:
+    m_OverlayManager.setStatusMessage(Overlay::StatusSource::HostLaunch, "");
+    m_HostLaunchWarning.clear();
     // Switch back to synchronous logging mode
     StreamUtils::exitAsyncLoggingMode();
 

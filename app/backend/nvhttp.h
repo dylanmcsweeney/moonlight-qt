@@ -3,6 +3,7 @@
 #include "identitymanager.h"
 #include "nvapp.h"
 #include "nvaddress.h"
+#include "launchwarning.h"
 
 #include <Limelight.h>
 
@@ -176,7 +177,8 @@ public:
              int playStationGamepadMask,
              bool persistGameControllersOnDisconnect,
              bool clientVrrRequested,
-             QString& rtspSessionUrl);
+             QString& rtspSessionUrl,
+             LaunchWarning::Warning& launchWarning);
 
     QVector<NvApp>
     getAppList();

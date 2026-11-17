@@ -11,6 +11,8 @@ lifecyclebatch3.file = lifecycle-batch3/lifecyclebatch3.pro
 SUBDIRS += streamprofiles startup bitstream backendreliability lifecyclebatch3
 
 contains(CONFIG, tests) {
+    launchWarning.file = $$PWD/backend/launchwarning.pro
+    SUBDIRS += launchWarning
     SUBDIRS += vrr haptics pyrowave
 } else {
     message(Normal stream profile, startup recovery, bitstream, backend, and lifecycle suites are enabled; rerun qmake with CONFIG+=tests for optional suites)

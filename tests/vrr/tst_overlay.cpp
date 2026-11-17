@@ -110,6 +110,14 @@ int main(int argc, char** argv)
         manager.setStatusMessage(StatusSource::Network, "network loss");
         manager.setStatusMessage(StatusSource::ClientPacing, "");
         assert(manager.getOverlayText(OverlayStatusUpdate) == "network loss");
+        manager.setStatusMessage(StatusSource::HostLaunch, "host display warning");
+        assert(manager.getOverlayText(OverlayStatusUpdate) == "network loss\n\nhost display warning");
+        manager.setStatusMessage(StatusSource::Mouse, "mouse");
+        assert(manager.getOverlayText(OverlayStatusUpdate) == "mouse\n\nhost display warning");
+        manager.setStatusMessage(StatusSource::Network, "");
+        manager.setStatusMessage(StatusSource::HostLaunch, "");
+        assert(manager.getOverlayText(OverlayStatusUpdate) == "mouse");
+        manager.setStatusMessage(StatusSource::Mouse, "");
         manager.setStatusMessage(StatusSource::Network, "");
         assert(!manager.isOverlayEnabled(OverlayStatusUpdate));
         Presenter old(manager), replacement(manager);

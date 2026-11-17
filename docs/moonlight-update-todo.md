@@ -2,6 +2,8 @@
 
 Last reviewed: November 16, 2026. This is a review and integration queue, not approval to apply every listed commit unchanged.
 
+**Paused at the user's request.** 7.1.1.1 is archived and verified; 7.1.1.2 core phase A compiles but awaits its runtime gate/review, and keypad phase B has not started. See [integration-checkpoint.md](integration-checkpoint.md) before resuming. Do not restart agents automatically.
+
 ## First batch — November 13, 2026
 
 - Settings-navigation repair finalized in local commit `a4cc6e8e`. The global-settings QML layout import and StackView-owned profile editor page are covered by the profile/navigation suite.

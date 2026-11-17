@@ -16,7 +16,7 @@ References: [Windows Installer ProductVersion](https://learn.microsoft.com/en-us
 
 ## Build records
 
-- [7.1.1.1](releases/7.1.1.1.md): host warnings and confirmed paired-host sleep; streaming core remains at the preceding tested revision.
+- [7.1.1.1](releases/7.1.1.1.md): host warnings and confirmed paired-host sleep; streaming core remains at the preceding tested revision. MSI built and payload verified; [artifact manifest](releases/manifests/7.1.1.1.json).
 - 7.1.1.2: next planned build, containing the compatible core sync and keypad Enter changes.
 
 Artifact manifests are added after successful MSI assembly. Remaining integration candidates and deferred work are tracked in [moonlight-update-todo.md](moonlight-update-todo.md).

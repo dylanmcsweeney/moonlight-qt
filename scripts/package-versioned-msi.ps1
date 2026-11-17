@@ -98,7 +98,7 @@ function Get-MsiProperty {
     $view = $Database.OpenView($query)
     $record = $null
     try {
-        $view.Execute()
+        [void] $view.Execute()
         $record = $view.Fetch()
         if ($null -eq $record) {
             throw "MSI Property table has no '$Name' value."
@@ -322,9 +322,18 @@ try {
         }
     }
 
-    $expectedMsiVersionPrefix = (($Version -split '\.')[0..2] -join '.')
-    if ($msiProperties.ProductVersion -cne $Version -and $msiProperties.ProductVersion -cne $expectedMsiVersionPrefix) {
-        throw "MSI ProductVersion is '$($msiProperties.ProductVersion)'; expected '$Version' or its Windows Installer three-field form '$expectedMsiVersionPrefix'."
+    foreach ($propertyName in @('ProductVersion', 'ProductCode', 'UpgradeCode')) {
+        $propertyValue = $msiProperties[$propertyName]
+        if ($propertyValue -isnot [string]) {
+            $propertyType = if ($null -eq $propertyValue) { 'null' } else { $propertyValue.GetType().FullName }
+            throw "MSI property '$propertyName' must be a scalar string; got $propertyType."
+        }
+        if ([string]::IsNullOrWhiteSpace($propertyValue)) {
+            throw "MSI property '$propertyName' is empty."
+        }
+    }
+    if ($msiProperties['ProductVersion'] -cne $Version) {
+        throw "MSI ProductVersion is '$($msiProperties['ProductVersion'])'; expected exact version '$Version'."
     }
 
     $finalSourceState = Get-VerifiedSourceState

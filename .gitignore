@@ -11,6 +11,8 @@ config.tests/*/Makefile
 MoonlightPortable*.zip
 MoonlightPortable*.7z
 MoonlightPortable*/
+MoonlightSetup-x64-*.msi
+MoonlightSetup-x64-*.msi.json
 
 # In-tree qmake output from scripts/build-fast-windows.cmd
 /.qmake.stash

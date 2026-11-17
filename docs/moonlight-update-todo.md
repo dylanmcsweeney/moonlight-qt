@@ -1,6 +1,6 @@
 # Moonlight update TODO
 
-Last reviewed: November 14, 2026. This is a review and integration queue, not approval to apply every listed commit unchanged.
+Last reviewed: November 16, 2026. This is a review and integration queue, not approval to apply every listed commit unchanged.
 
 ## First batch — November 13, 2026
 
@@ -37,6 +37,13 @@ Last reviewed: November 14, 2026. This is a review and integration queue, not ap
 - Luna Max produced useful fork-aware implementations. Parent review prompted PID-separated log naming, standalone-dialog guards, explicit deferred-action cancellation, careful VRR lock scope and a stronger cleanup-order assertion; those refinements were incorporated before final validation. Independent Sol Medium's completed-diff audit found no actionable issues. Native GPU presentation, actual controller hardware, Linux startup, resize/move, reconnect and SDR/HDR transitions still require platform/interactive testing.
 - Separate portable package: `build/deploy-batch3-test`. Qt deployment and the isolated headless license smoke passed (exit 0, no stderr); packaged executable SHA-256 matches the final release executable. Existing deployments and installed copies were not replaced. No MSI rebuild or GitHub push was performed.
 - Still deferred: keypad Enter requires the missing `MODIFIER_EXTENDED` core definition; larger Nonary VRR/PyroWave/core work, color/dependency updates, other platform fixes and MSI upgrade-warning cleanup remain separate stages below.
+
+## Versioned MSI series — November 16, 2026
+
+- User approved two cumulative MSI builds, **7.1.1.1** and **7.1.1.2**, with small reviewed integration steps inside each release. This supersedes the earlier instruction to hold `version.txt` uncommitted. Starting at 7.1.1 avoids a downgrade/uninstall from the previously used 7.1.0 build. Source/version notes are committed at each boundary; MSI archives and adjacent source/checksum manifests are retained in the project root, with manifests also committed after packaging. No installation or GitHub push is part of preparation.
+- First release source increments: `58ae53b9` adapts Nonary host warnings (`3ae5f3b0`, `d54e6c04`); `1b13be23` adapts confirmed paired-host sleep (`696afb07`) and its Windows test headers (`cfef0e8d`). Each increment passed its Windows release build and relevant automated gate before the next step. Detailed scope, tests, delegation review and limits: [7.1.1.1](releases/7.1.1.1.md).
+- First MSI retains the old core `d6a11bc`; the second will take fork-compatible sync `4c05b34e` with the MSVC atomics companion `f586143c`, and input relocation/keypad changes `b75fe0d9`/`c0f62ad6`. The broader VRR redesign, optional new PyroWave negotiation, color/dependency refresh and remaining platform items are still separate work.
+- Preparation guidance and artifact index: [versioned-test-builds.md](versioned-test-builds.md). Existing root MSIs, host logs and crash-test folder remain preserved.
 
 ## Baseline and scope
 
@@ -84,8 +91,8 @@ Last reviewed: November 14, 2026. This is a review and integration queue, not ap
 - [ ] Review PyroWave calibration quality, bandwidth/FEC budgeting, loss/shimmering behavior, UDP completion reporting and D3D11 import fixes as related changes with their tests.
 - [ ] Review the newer Windows native timing/waitable-DXGI behavior and the VRR buffer/goal-solver revisions as a subsystem. Include subsequent smoothing/recovery/accounting fixes through daily.200 rather than isolating an early redesign commit.
 - [x] Review dialog controller-focus and dialog-first Back/Escape handling (`d0b9edb9`, `f1bd296e`), preserving our custom dialogs and settings-access checks. Adapted in `03e045e7`; Basic and Material regression suites passed.
-- [ ] Review nonfatal host warnings (`3ae5f3b0`, `d54e6c04`). These improve diagnostics and do not repair host display topology.
-- [ ] Review paired-host sleep actions (`696afb07`) as an optional user-visible feature, including confirmation/capability behavior.
+- [x] Review nonfatal host warnings (`3ae5f3b0`, `d54e6c04`). Applied in `58ae53b9` for 7.1.1.1; parser/overlay tests and independent review passed. These improve diagnostics and do not repair host display topology.
+- [x] Review paired-host sleep actions (`696afb07`) as an optional user-visible feature, including confirmation/capability behavior. Applied in `1b13be23` for 7.1.1.1; loopback TLS and real-QML tests passed, with live sleep/wake remaining interactive validation.
 - [ ] Review DualSense waveform/speaker and Steam Controller 2026 support as separate input features, including device lifetime and core ABI dependencies.
 - [ ] Review Nonary's upstream streaming-core sync (`4c05b34e`) and companion MSVC C11 atomics change (`f586143c`). Prefer the compatible Nonary core over substituting original upstream's submodule pointer.
 - [ ] Reconcile the older frame-loss backlog (`14c26d8c`) and later core updates (`dc92b6d2`, `8016954c`) against that synced fork. Our current core `d6a11bc` diverges from upstream frame-fix pointer `62e0663`; ancestry alone does not establish equivalent patch presence.

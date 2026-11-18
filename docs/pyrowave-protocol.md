@@ -241,24 +241,22 @@ Our client decodes a record-framed frame that lost packets. moonlight-common-c
 first repairs what parity can (the critical packets). It does not drop a PyroWave
 frame whose FEC block cannot complete: once the next block or frame starts
 arriving, each missing data packet is replaced by zeros and delivered as a
-`BUFFER_TYPE_LOST` buffer. Once its final data packet has arrived, a final block
-without parity can also complete after 1 ms of packet silence, without waiting
-for the next frame. The final packet is identified by its sequence position in
-the announced data-packet count; an EOF flag on an earlier packet is insufficient. When the client
-reports that the frame's VRR slot is nearer than that
-(`LiSetVideoReassemblyDeadlineCallback()`), the silence shrinks to the slot, but
-never below 250 us after the last unique packet. This requires a
-record-start flag, the short frame header's nonzero critical packet count, and
-all packets in that critical prefix to be present. Unique arrivals renew the
-deadline, including reordered packets; duplicates do not. The receiver drains
-queued socket data before expiring the deadline. If the final data packet is
-absent, no silence deadline is armed: the frame waits for its remaining data or
-the next frame boundary. This prevents host batch/pacing gaps from becoming
-artificial loss. A genuinely lost tail may therefore delay partial delivery
-until the next frame. Interior detail arriving after expiry is discarded,
-trading a bounded reorder allowance for prompt partial-frame delivery. Parity-bearing
-blocks and unknown or incomplete critical prefixes retain boundary-based
-recovery. The frame is still dropped when its first packet
+`BUFFER_TYPE_LOST` buffer. For a final block without parity, the receiver can
+deliver a partial frame after 1 ms of packet silence when the final data packet
+has arrived, or after 3 ms when it is still missing. The receiver identifies
+the final packet by its sequence position in the announced data-packet count.
+An EOF flag on an earlier packet still gets the longer allowance. When the
+client reports a nearer VRR slot (`LiSetVideoReassemblyDeadlineCallback()`),
+the receiver can use that slot with a minimum silence of 250 us for an interior
+hole or 1.2 ms for a missing tail. Unique arrivals renew the deadline, including
+reordered packets. Duplicates leave it unchanged. The receiver drains queued
+socket data before expiring the deadline. Early delivery requires a
+record-start flag, a nonzero critical packet count in the short frame header,
+and every packet in that critical prefix to be present. If the socket runs dry
+and the deadline expires during a pause between host batches, even a suffix
+that subsequently arrives intact is discarded. Parity-bearing blocks and
+unknown or incomplete critical prefixes retain boundary-based recovery. The
+frame is still dropped when its first packet
 (sequence header) or a whole FEC block is missing, which parity on the critical
 block makes rare. Packets flagged `0x80` arrive as `BUFFER_TYPE_RECORD_START`
 buffers, and the critical packet count as `DECODE_UNIT.pyrowaveCriticalPackets`.

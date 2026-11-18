@@ -100,6 +100,7 @@ jobs:
           for /f "usebackq delims=" %%i in (`scripts\vswhere.exe -latest -property installationPath`) do call "%%i\VC\Auxiliary\Build\vcvarsall.bat" x64
           if errorlevel 1 exit /b 1
           set "PATH=%QT_PATH%;%PATH%"
+          set "MOONLIGHT_CORECOMPAT_BUILD_DIR=%CD%\build\build-x64-release\moonlight-common-c"
           mkdir build\tests-vrr
           cd build\tests-vrr
           qmake ..\..\tests\tests.pro CONFIG+=tests CONFIG+=release

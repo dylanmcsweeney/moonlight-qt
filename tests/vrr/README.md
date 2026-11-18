@@ -260,10 +260,12 @@ making a 99.95% visible-smoothness claim. Use gameplay captures for gameplay
 optimization, not desktop/idle sessions. Hold publication if a requested latency
 and smoothness target has not been established.
 
-The VRR test tree is opt-in so regular application and package builds do not
-gain test targets. From an out-of-tree build directory, configure it with:
+The VRR test tree is opt-in. Build the app with the same Qt kit, architecture,
+and configuration first so the core compatibility fixture can link its
+production library. From an out-of-tree test build directory, configure it with:
 
 ```powershell
+$env:MOONLIGHT_CORECOMPAT_BUILD_DIR = 'C:\path\to\app-build\moonlight-common-c'
 & C:\Users\Chase\sources\.tools\Qt\6.11.1\msvc2022_64\bin\qmake.exe `
     ..\tests\tests.pro CONFIG+=tests
 nmake

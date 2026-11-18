@@ -12,10 +12,14 @@ INCLUDEPATH += $$COMMON/src \
                $$COMMON/enet/include
 
 # InputStream.c is included by the fixture for queue inspection. Its dependencies
-# come from the production streaming-core library built beside this test suite.
-win32:CONFIG(release, debug|release): LIBS += -L$$OUT_PWD/../../moonlight-common-c/release/ -lmoonlight-common-c
-else:win32:CONFIG(debug, debug|release): LIBS += -L$$OUT_PWD/../../moonlight-common-c/debug/ -lmoonlight-common-c
-else:unix: LIBS += -L$$OUT_PWD/../../moonlight-common-c/ -lmoonlight-common-c
+# come from the production streaming-core library. Standalone test builds can
+# point to an existing app build via the environment inherited by sub-qmake.
+CORE_BUILD_DIR = $$(MOONLIGHT_CORECOMPAT_BUILD_DIR)
+isEmpty(CORE_BUILD_DIR): CORE_BUILD_DIR = $$OUT_PWD/../../moonlight-common-c
+CORE_BUILD_DIR = $$clean_path($$CORE_BUILD_DIR)
+win32:CONFIG(release, debug|release): CORE_BUILD_DIR = $$CORE_BUILD_DIR/release
+else:win32:CONFIG(debug, debug|release): CORE_BUILD_DIR = $$CORE_BUILD_DIR/debug
+LIBS += "-L$$CORE_BUILD_DIR" -lmoonlight-common-c
 
 *-msvc {
     QMAKE_CFLAGS += -std:c11 -experimental:c11atomics /Gy

@@ -9,15 +9,18 @@ Build this suite from an out-of-source build directory:
 Use the Qt kit's equivalent build command on Windows (nmake for MSVC); run
 tst_bitstream.exe from the selected debug or release output directory.
 
-To build the normal test gate, configure tests/tests.pro from a separate
-out-of-source build directory:
+To build the normal test gate in a separate directory, first build Moonlight
+with the same Qt kit and architecture so the core compatibility fixture can
+link its production library. Point the test build at that core output:
 
+    export MOONLIGHT_CORECOMPAT_BUILD_DIR=/path/to/app-build/moonlight-common-c
     qmake /path/to/moonlight-qt/tests/tests.pro
     make
 
-This builds the stream profile, startup recovery, bitstream, and backend
-reliability suites. Add CONFIG+=tests to the qmake command to enable the
-optional platform and diagnostics suites.
+In PowerShell, set `$env:MOONLIGHT_CORECOMPAT_BUILD_DIR` to the same directory
+in the Windows app build. Select the same debug or release configuration for
+both builds. Add `CONFIG+=tests` to enable the optional platform and diagnostics
+suites.
 
 The tests compile the production h264bitstream sources and cover signed
 Exp-Golomb boundary encodings, writes wider than 32 bits, SPS/HRD array

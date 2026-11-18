@@ -20,3 +20,5 @@ References: [Windows Installer ProductVersion](https://learn.microsoft.com/en-us
 - [7.1.1.2](releases/7.1.1.2.md) adds the fork-compatible core sync, bounded PyroWave missing-tail recovery and extended keyboard input.
 
 Artifact manifests are added after successful MSI assembly. Remaining integration candidates and deferred work are tracked in [moonlight-update-todo.md](moonlight-update-todo.md).
+
+- [7.1.1.3](releases/7.1.1.3.md) corrects the stale GUI version in the second installer. [Artifact manifest](releases/manifests/7.1.1.3.json).

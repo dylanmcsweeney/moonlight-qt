@@ -9,7 +9,8 @@ bitstream.file = bitstream/bitstream.pro
 backendreliability.file = backend-batch2/backendreliability.pro
 lifecyclebatch3.file = lifecycle-batch3/lifecyclebatch3.pro
 corecompat.file = corecompat/corecompat.pro
-SUBDIRS += streamprofiles startup bitstream backendreliability lifecyclebatch3 corecompat
+keyboard.file = keyboard/keyboard.pro
+SUBDIRS += streamprofiles startup bitstream backendreliability lifecyclebatch3 corecompat keyboard
 
 contains(CONFIG, tests) {
     powerActions.file = $$PWD/power/poweractions.pro

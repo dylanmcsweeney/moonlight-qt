@@ -713,6 +713,6 @@ PE_VERSION = $$(MOONLIGHT_PE_VERSION)
 !isEmpty(PE_VERSION) {
     VERSION = "$$PE_VERSION"
 }
-DEFINES += VERSION_STR=\\\"$$MOONLIGHT_VERSION\\\"
+include(moonlightversion.pri)
 
 SOURCES += $$PWD/streaming/video/ffmpeg-renderers/pacer/vrr/profile.cpp

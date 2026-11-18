@@ -4,7 +4,8 @@ CONFIG -= app_bundle
 TEMPLATE = app
 TARGET = streamprofile-tests
 
-DEFINES += VERSION_STR=\\\"$$cat(../app/version.txt)\\\"
+MOONLIGHT_VERSION = $$cat(../app/version.txt)
+include(../app/moonlightversion.pri)
 DEFINES += TEST_APP_GUI_DIR=\\\"$$PWD/../app/gui\\\"
 
 INCLUDEPATH += ../app

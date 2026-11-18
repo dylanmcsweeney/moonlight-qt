@@ -1,3 +1,4 @@
+#include "moonlightversion.h"
 #include <QGuiApplication>
 #include "streaming/video/amddecodepolicy.h"
 #include <QStyleHints>

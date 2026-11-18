@@ -1,3 +1,4 @@
+#include "moonlightversion.h"
 #include "autoupdatechecker.h"
 #include "settings/buildidentity.h"
 

@@ -1,3 +1,4 @@
+#include "moonlightversion.h"
 #include "buildidentity.h"
 
 #include <QFile>

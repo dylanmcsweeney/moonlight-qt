@@ -1,3 +1,4 @@
+#include "moonlightversion.h"
 #include <QtTest>
 
 #include "cli/commandlineparser.h"

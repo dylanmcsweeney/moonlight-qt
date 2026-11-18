@@ -1,8 +1,8 @@
 # Moonlight update TODO
 
-Last reviewed: November 16, 2026. This is a review and integration queue, not approval to apply every listed commit unchanged.
+Last reviewed: November 18, 2026. This is a review and integration queue, not approval to apply every listed commit unchanged.
 
-**Paused at the user's request.** 7.1.1.1 is archived and verified; 7.1.1.2 core phase A compiles but awaits its runtime gate/review, and keypad phase B has not started. See [integration-checkpoint.md](integration-checkpoint.md) before resuming. Do not restart agents automatically.
+The two cumulative Windows test builds are recorded in the [versioned build index](versioned-test-builds.md).
 
 ## First batch — November 13, 2026
 
@@ -45,7 +45,7 @@ Last reviewed: November 16, 2026. This is a review and integration queue, not ap
 - User approved two cumulative MSI builds, **7.1.1.1** and **7.1.1.2**, with small reviewed integration steps inside each release. This supersedes the earlier instruction to hold `version.txt` uncommitted. Starting at 7.1.1 avoids a downgrade/uninstall from the previously used 7.1.0 build. Source/version notes are committed at each boundary; MSI archives and adjacent source/checksum manifests are retained in the project root, with manifests also committed after packaging. No installation or GitHub push is part of preparation.
 - First release source increments: `58ae53b9` adapts Nonary host warnings (`3ae5f3b0`, `d54e6c04`); `1b13be23` adapts confirmed paired-host sleep (`696afb07`) and its Windows test headers (`cfef0e8d`). Each increment passed its Windows release build and relevant automated gate before the next step. Detailed scope, tests, delegation review and limits: [7.1.1.1](releases/7.1.1.1.md).
 - The first MSI is archived as `MoonlightSetup-x64-7.1.1.1.msi`, source `13b2c100` / tag `codex/build-7.1.1.1`. Extraction verified 1,426 payload files, executable hash equality, runtime presence and absence of user settings/portable markers; the extracted app passed its isolated headless smoke. [Committed artifact manifest](releases/manifests/7.1.1.1.json). The existing four ICE61/ICE69 warnings remain; no native installation was performed.
-- First MSI retains the old core `d6a11bc`; the second will take fork-compatible sync `4c05b34e` with the MSVC atomics companion `f586143c`, and input relocation/keypad changes `b75fe0d9`/`c0f62ad6`. The broader VRR redesign, optional new PyroWave negotiation, color/dependency refresh and remaining platform items are still separate work.
+- The first MSI retains core `d6a11bc`. The second takes the Nonary core sync and extended-key changes. See [7.1.1.2](releases/7.1.1.2.md) for the PyroWave missing-tail tradeoff and A/B test.
 - Preparation guidance and artifact index: [versioned-test-builds.md](versioned-test-builds.md). Existing root MSIs, host logs and crash-test folder remain preserved.
 
 ## Baseline and scope
@@ -72,7 +72,7 @@ Last reviewed: November 16, 2026. This is a review and integration queue, not ap
 - [x] Fix mixed-DPI toolbar resize feedback (`4113dd26`); include the long-hostname display/tooltip improvement (`029da3fb`) if compatible with our computer cards. Local commit `9c2aa36f`; focused toolbar regression passes and detects the old code.
 - [x] Review CLI launch polling ownership (`74020b53`) and undefined quit-progress label (`67dbfddb`), preserving our settings guards and startup recovery. Label: `9c2aa36f`; polling ownership: `03e045e7`.
 - [x] Review renderer failure-reason initialization (`465c41b5`), D3D11 swapchain/base-class color-state shadowing (`ba700d67`), and DXVA2 failure cleanup (`d606709d`). Applied, independently reviewed and built; GPU-specific interactive checks remain recorded above.
-- [ ] Review adaptive-trigger controller bounds (`9fee675c`), known Steam Controller identification (`d2f6990b`), and Enter versus keypad Enter (`c0f62ad6`, with its required core/protocol changes). Bounds are already equivalent through `72b936173`; identification is applied in `03e045e7` using the existing core's `LI_CTYPE_STEAM`. Keypad remains deferred until the fork-compatible core provides `MODIFIER_EXTENDED`. Treat `b75fe0d9` as context/dependency, not a feature to pull for its own sake.
+- [x] Adaptive trigger bounds are equivalent through `72b936173`. Steam Controller identification is in `03e045e7`; extended Enter and keypad input are in 7.1.1.2.
 - [x] Integrate applicable pairing/key/certificate checks (`a6149245`, `2bd4b9f7`, `ee557e83`). Applied in `8ce39873`; source review, release build and backend tests passed, with direct branch-coverage limits recorded above.
 - [x] Integrate applicable bitstream/version parsing fixes (`fa6ae809`, `289782c6`, `9b8886a6`, `c8474c51`, `0c4f7aef`, `6fc7e816`); retain source headers and useful warnings (`a57e947d`, `71c3191e`). Applied in `8ce39873`; boundary/UBSan and backend suites passed; FFmpeg fallback remains source-reviewed only.
 - [x] Review TCP/TLS timeouts (`74173b26`) and Qt-version-specific connection caching (`781b26fd`). Applied in `8ce39873`; loopback tests verify stalled TLS times out and a sent request may receive a body after 5 seconds. Qt 6.12-only semantics remain platform validation.
@@ -97,8 +97,8 @@ Last reviewed: November 16, 2026. This is a review and integration queue, not ap
 - [x] Review nonfatal host warnings (`3ae5f3b0`, `d54e6c04`). Applied in `58ae53b9` for 7.1.1.1; parser/overlay tests and independent review passed. These improve diagnostics and do not repair host display topology.
 - [x] Review paired-host sleep actions (`696afb07`) as an optional user-visible feature, including confirmation/capability behavior. Applied in `1b13be23` for 7.1.1.1; loopback TLS and real-QML tests passed, with live sleep/wake remaining interactive validation.
 - [ ] Review DualSense waveform/speaker and Steam Controller 2026 support as separate input features, including device lifetime and core ABI dependencies.
-- [ ] Review Nonary's upstream streaming-core sync (`4c05b34e`) and companion MSVC C11 atomics change (`f586143c`). Prefer the compatible Nonary core over substituting original upstream's submodule pointer.
-- [ ] Reconcile the older frame-loss backlog (`14c26d8c`) and later core updates (`dc92b6d2`, `8016954c`) against that synced fork. Our current core `d6a11bc` diverges from upstream frame-fix pointer `62e0663`; ancestry alone does not establish equivalent patch presence.
+- [x] Integrated Nonary core sync `4c05b34e` and MSVC atomics companion `f586143c` in `c7a25f5f`.
+- [x] Reviewed final core source for the frame-loss behaviors from `14c26d8c` and the later updates `dc92b6d2` and `8016954c`. See the [second build record](releases/7.1.1.2.md).
 - [ ] Verify per-PC persistence/equality/copy paths for every new setting, plus settings concurrency, PyroWave framing/transport/decoder tests, applicable VRR tests, a consistent-toolchain release build and portable deployment.
 - [ ] Have an independent review of the integration and report any delegated-development corrections/quality as requested. Existing development preference: Luna Max; if that is insufficient, consider Sol Low/Medium instead of Luna Ultra.
 
@@ -175,8 +175,8 @@ Grouped review inventory, not a claim that every unmarked commit should be cherr
 ### Input behavior; coordinate core dependencies
 
 - [x] [`d2f6990b`](https://github.com/moonlight-stream/moonlight-qt/commit/d2f6990b) — Send LI_CTYPE_STEAM for known Steam Controllers — Applied/adapted in local commit `03e045e7`; validation and platform limits recorded in the third-batch notes.
-- [ ] [`b75fe0d9`](https://github.com/moonlight-stream/moonlight-qt/commit/b75fe0d9) — Reorganize a couple mouse and keyboard functions
-- [ ] [`c0f62ad6`](https://github.com/moonlight-stream/moonlight-qt/commit/c0f62ad6) — Distinguish between Enter and Numpad Enter
+- [x] [`b75fe0d9`](https://github.com/moonlight-stream/moonlight-qt/commit/b75fe0d9) — Reorganize a couple mouse and keyboard functions — Included or source-reconciled in 7.1.1.2.
+- [x] [`c0f62ad6`](https://github.com/moonlight-stream/moonlight-qt/commit/c0f62ad6) — Distinguish between Enter and Numpad Enter — Included or source-reconciled in 7.1.1.2.
 - [x] [`9fee675c`](https://github.com/moonlight-stream/moonlight-qt/commit/9fee675c) — Fix controller number check for adaptive triggers — Already equivalent: Nonary `72b936173`; no code change.
 
 ### Concurrency / pacing; adapt to Nonary
@@ -202,9 +202,9 @@ Grouped review inventory, not a claim that every unmarked commit should be cherr
 
 ### Streaming core; use fork-compatible sync
 
-- [ ] [`14c26d8c`](https://github.com/moonlight-stream/moonlight-qt/commit/14c26d8c) — Update moonlight-common-c with frame loss fixes
-- [ ] [`dc92b6d2`](https://github.com/moonlight-stream/moonlight-qt/commit/dc92b6d2) — Update moonlight-common-c
-- [ ] [`8016954c`](https://github.com/moonlight-stream/moonlight-qt/commit/8016954c) — Update moonlight-common-c
+- [x] [`14c26d8c`](https://github.com/moonlight-stream/moonlight-qt/commit/14c26d8c) — Update moonlight-common-c with frame loss fixes — Included or source-reconciled in 7.1.1.2.
+- [x] [`dc92b6d2`](https://github.com/moonlight-stream/moonlight-qt/commit/dc92b6d2) — Update moonlight-common-c — Included or source-reconciled in 7.1.1.2.
+- [x] [`8016954c`](https://github.com/moonlight-stream/moonlight-qt/commit/8016954c) — Update moonlight-common-c — Included or source-reconciled in 7.1.1.2.
 - [ ] [`29f121a7`](https://github.com/moonlight-stream/moonlight-qt/commit/29f121a7) — Fix moonlight-common-c with CONFIG+=disable-prebuilts on macOS
 
 ### CUDA / Vulkan renderer; feature and dependency checks

@@ -1,0 +1,43 @@
+{
+  "msiFile": "MoonlightSetup-x64-7.1.1.2.msi",
+  "msiSha256": "bd2a1747504b2222e64fe805f93f45549b1f10372418a3820fb3dc25b6d4ec1d",
+  "exeSha256": "d49a5a7b345937e032344c4e1b730b6faeecedaf84b83f35aefa97c942a0ee19",
+  "version": "7.1.1.2",
+  "executable": {
+    "fileVersion": "7.1.1.2",
+    "productVersion": "7.1.1.2"
+  },
+  "msiProperties": {
+    "ProductVersion": "7.1.1.2",
+    "ProductCode": "{281863ED-E13E-49AD-9C8A-40263A410C21}",
+    "UpgradeCode": "{5C09F94E-F809-4C6A-9B7B-597C99F041FE}"
+  },
+  "source": {
+    "revision": "4ee151ca871f73b48751f7fe556e121dd1b6bd24",
+    "trackedClean": true,
+    "trackedStatus": ""
+  },
+  "build": {
+    "architecture": "x64",
+    "configuration": "release",
+    "buildDirectory": "C:\\local\\code\\3rdparty\\moonlight-qt_nonary\\build\\series-x64-release",
+    "dependencyDirectory": "C:\\local\\code\\3rdparty\\moonlight-qt_nonary\\build\\series-x64-release\\msi-deploy-7.1.1.2",
+    "qtRoot": "C:\\local\\programs\\Qt\\6.11.1\\msvc2022_64",
+    "windeployqt": "C:\\local\\programs\\Qt\\6.11.1\\msvc2022_64\\bin\\windeployqt.exe",
+    "msbuild": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\MSBuild\\Current\\Bin\\MSBuild.exe",
+    "vcRuntimeDirectory": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Redist\\MSVC\\14.52.37025\\x64\\Microsoft.VC145.CRT",
+    "dxcDirectory": "C:\\Program Files (x86)\\Windows Kits\\10\\bin\\10.0.28000.0\\x64",
+    "libraryDllCount": 13,
+    "vcRuntimeDllCount": 10
+  },
+  "validation": {
+    "extractedFileCount": 1426,
+    "payloadPathsMatchVerifiedFirstBuild": true,
+    "extractedExeHashMatches": true,
+    "distinctProductCode": true,
+    "sharedUpgradeCode": true,
+    "headlessSmokeExitCode": 0,
+    "headlessSmokeStderrBytes": 0,
+    "headlessSmokeStdoutBytes": 64325
+  }
+}
